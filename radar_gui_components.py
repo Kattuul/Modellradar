@@ -534,6 +534,29 @@ class ActionsPage(Gtk.Box):
             f"Nächster Timerstart: {timer.get('NextElapseUSecRealtime', 'unbekannt')}",
             f"Timerdatei: {timer.get('FragmentPath', 'unbekannt')}", "",
         ]
+        graphics = data.get("graphics", {})
+        if isinstance(graphics, dict):
+            detail_lines.extend([
+                "Grafikhardware (sichtbar für diesen Prozess)",
+                "---------------------------------------------",
+            ])
+            adapters = graphics.get("adapters", [])
+            if isinstance(adapters, list) and adapters:
+                for adapter in adapters:
+                    if not isinstance(adapter, dict):
+                        continue
+                    vram = adapter.get("vram_bytes")
+                    vram_text = f"{int(vram) / (1024 ** 3):.1f} GiB VRAM" if isinstance(vram, int) else "VRAM unbekannt"
+                    detail_lines.append(
+                        f"- {adapter.get('card', 'GPU')}: {adapter.get('vendor', 'unbekannt')} "
+                        f"({adapter.get('kind', 'unbekannt')}, Treiber: {adapter.get('driver', 'unbekannt')}, {vram_text})"
+                    )
+            else:
+                detail_lines.append("- Keine sichtbaren Grafikadapter.")
+            limitations = graphics.get("limitations", [])
+            if isinstance(limitations, list):
+                detail_lines.extend(f"  Hinweis: {item}" for item in limitations)
+            detail_lines.append("")
         requested_actions: set[str] = set()
         for finding in findings:
             if not isinstance(finding, dict):

@@ -353,8 +353,20 @@ weiterhin keine Aussage über Kompatibilität oder Qualität.
 
 ## Diagnose
 
-Die GUI wertet die Diagnose maschinenlesbar aus. Für Skripte ist derselbe
-JSON-Vertrag direkt verfügbar:
+Die GUI wertet die Diagnose maschinenlesbar aus. Sie zeigt zusätzlich die für
+den aktuellen Prozess sichtbaren Grafikadapter, deren Treiber und – sofern der
+Treiber dies unprivilegiert bereitstellt – den dedizierten VRAM. Die Erkennung
+liest nur DRM/sysfs-Attribute; für NVIDIA wird optional das vorhandene
+`nvidia-smi` mit einer festen, lesenden Abfrage verwendet. Sie installiert keine
+Treiber, nutzt kein `sudo` und schreibt nie an Hardware-Schnittstellen.
+
+Je nach Distribution, Container- oder Flatpak-Sandbox und Sicherheitsrichtlinie
+kann die Hardware absichtlich teilweise oder vollständig verborgen sein. In
+diesem Fall meldet Modellradar die Einschränkung statt aus fehlenden Daten zu
+schließen, dass keine dGPU vorhanden ist. Die Anzeige ist eine Bestandsaufnahme
+und noch keine Kompatibilitäts- oder Modell-Empfehlung.
+
+Für Skripte ist derselbe JSON-Vertrag direkt verfügbar:
 
 ```bash
 python3 model_radar_diagnostics.py --json

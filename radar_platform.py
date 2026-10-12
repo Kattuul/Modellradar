@@ -9,10 +9,17 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 SERVICE = "qwen35-model-radar.service"
 TIMER = "qwen35-model-radar.timer"
+
+PCI_VENDORS = {
+    "0x1002": "AMD",
+    "0x10de": "NVIDIA",
+    "0x8086": "Intel",
+}
 
 
 def python_command(script: str, *arguments: str) -> list[str]:
@@ -32,6 +39,112 @@ def send_notification(title: str, message: str) -> None:
         ["notify-send", "--app-name=LLM-Modellradar", "--urgency=normal", title, message],
         check=True, timeout=10,
     )
+
+
+def _read_text(path: Path) -> str:
+    """Liest ein einzelnes, vom Kernel bereitgestelltes Attribut sicher ein."""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return ""
+
+
+def _vram_bytes(device: Path) -> int | None:
+    """Liest den vom DRM-Treiber gemeldeten dedizierten VRAM ohne Treiberzugriff."""
+    value = _read_text(device / "mem_info_vram_total")
+    try:
+        return int(value) if value else None
+    except ValueError:
+        return None
+
+
+def _nvidia_vram(command_runner: Callable | None = None) -> list[int]:
+    """Fragt optional nvidia-smi ab; Fehler bedeuten nur unvollständige Anzeige."""
+    executable = shutil.which("nvidia-smi")
+    if not executable:
+        return []
+    run = command_runner or subprocess.run
+    try:
+        result = run(
+            [executable, "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            text=True, capture_output=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode:
+        return []
+    values: list[int] = []
+    for line in result.stdout.splitlines():
+        try:
+            values.append(int(line.strip()) * 1024 * 1024)
+        except ValueError:
+            continue
+    return values
+
+
+def detect_graphics(
+    sysfs_root: Path = Path("/sys/class/drm"),
+    command_runner: Callable | None = None,
+) -> dict:
+    """Ermittelt sichtbare Grafikadapter ohne Root-Rechte oder Schreibzugriffe.
+
+    Es werden nur Kernelattribute in sysfs und, für NVIDIA-VRAM, optional das
+    vorhandene lesende Treiberwerkzeug abgefragt. Container und Flatpaks dürfen
+    diese Informationen aus Sicherheitsgründen einschränken; das Ergebnis ist
+    deshalb eine Bestandsaufnahme der *sichtbaren* Hardware, keine Zusicherung
+    über die gesamte Host-Hardware.
+    """
+    adapters: list[dict[str, object]] = []
+    limitations: list[str] = []
+    try:
+        cards = sorted(
+            path for path in sysfs_root.iterdir()
+            if path.name.startswith("card") and path.name[4:].isdigit()
+        )
+    except OSError as exc:
+        return {"adapters": [], "limitations": [f"Grafikhardware ist für diesen Prozess nicht lesbar: {exc}"]}
+
+    for card in cards:
+        device = card / "device"
+        vendor_id = _read_text(device / "vendor").lower()
+        if not vendor_id:
+            continue
+        vendor = PCI_VENDORS.get(vendor_id, f"Unbekannter PCI-Hersteller ({vendor_id})")
+        driver_link = device / "driver"
+        try:
+            driver = driver_link.resolve().name if driver_link.is_symlink() else ""
+        except OSError:
+            driver = ""
+        vram = _vram_bytes(device)
+        kind = "dediziert" if vendor == "NVIDIA" or (vendor == "AMD" and vram) else (
+            "integriert" if vendor == "Intel" else "unbekannt"
+        )
+        adapters.append({
+            "card": card.name,
+            "vendor": vendor,
+            "vendor_id": vendor_id,
+            "device_id": _read_text(device / "device"),
+            "driver": driver or "unbekannt",
+            "kind": kind,
+            "vram_bytes": vram,
+            "vram_source": "DRM/sysfs" if vram is not None else "",
+        })
+
+    # NVIDIA exposes VRAM through its userspace tool on many systems, whereas
+    # its DRM sysfs attribute is commonly absent. The fixed command is optional
+    # and unprivileged; failures deliberately leave the value unknown.
+    missing_nvidia = [item for item in adapters if item["vendor"] == "NVIDIA" and item["vram_bytes"] is None]
+    for adapter, vram in zip(missing_nvidia, _nvidia_vram(command_runner)):
+        adapter["vram_bytes"] = vram
+        adapter["vram_source"] = "nvidia-smi"
+
+    if os.environ.get("FLATPAK_ID"):
+        limitations.append("Flatpak-Sandbox: Es werden nur für die Anwendung freigegebene Grafikdaten angezeigt.")
+    if not adapters:
+        limitations.append("Keine für diesen Prozess sichtbaren DRM-Grafikadapter gefunden.")
+    elif any(item["vram_bytes"] is None for item in adapters):
+        limitations.append("Dedizierter VRAM konnte nicht für alle Adapter ermittelt werden.")
+    return {"adapters": adapters, "limitations": limitations}
 
 
 @dataclass(frozen=True)

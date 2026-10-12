@@ -15,6 +15,35 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PlatformTests(unittest.TestCase):
+    def test_gpu_erkennung_liefert_sysfs_adapter_ohne_sonderrechte(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            device = root / "card1/device"
+            device.mkdir(parents=True)
+            (device / "vendor").write_text("0x1002\n")
+            (device / "device").write_text("0x744c\n")
+            (device / "mem_info_vram_total").write_text(str(16 * 1024 ** 3))
+            (device / "driver").symlink_to("amdgpu")
+            graphics = radar_platform.detect_graphics(root)
+        self.assertEqual(graphics["adapters"][0]["vendor"], "AMD")
+        self.assertEqual(graphics["adapters"][0]["kind"], "dediziert")
+        self.assertEqual(graphics["adapters"][0]["vram_bytes"], 16 * 1024 ** 3)
+        self.assertEqual(graphics["adapters"][0]["vram_source"], "DRM/sysfs")
+
+    def test_nvidia_vram_bleibt_optional_und_lesend(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch("radar_platform.shutil.which", return_value="/usr/bin/nvidia-smi"):
+            root = Path(directory)
+            device = root / "card0/device"
+            device.mkdir(parents=True)
+            (device / "vendor").write_text("0x10de\n")
+            command = mock.Mock(return_value=subprocess.CompletedProcess(
+                [], 0, stdout="12288\n", stderr="",
+            ))
+            graphics = radar_platform.detect_graphics(root, command)
+        self.assertEqual(graphics["adapters"][0]["vram_bytes"], 12 * 1024 ** 3)
+        self.assertEqual(graphics["adapters"][0]["vram_source"], "nvidia-smi")
+        self.assertEqual(command.call_args.args[0][1:], ["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+
     def test_headless_speichert_ohne_site_packages_und_desktop(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)

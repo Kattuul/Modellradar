@@ -1,11 +1,25 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import subprocess
 import unittest
+from unittest import mock
 
 import model_radar_diagnostics as diagnostics
 
 
 class DiagnosticsTests(unittest.TestCase):
+    @mock.patch("model_radar_diagnostics.radar_platform.detect_graphics")
+    def test_diagnose_enthaelt_sichtbare_grafikhardware(self, detect_graphics):
+        detect_graphics.return_value = {
+            "adapters": [{"card": "card1", "vendor": "AMD", "kind": "dediziert", "driver": "amdgpu", "vram_bytes": 16 * 1024 ** 3}],
+            "limitations": ["VRAM-Werte sind treiberabhängig."],
+        }
+        def executor(arguments, **_kwargs):
+            return subprocess.CompletedProcess(arguments, 0, stdout="LoadState=loaded\nActiveState=active\nResult=success\n", stderr="")
+        report = diagnostics.render_diagnostics(diagnostics.collect_diagnostic_data(executor))
+        self.assertIn("Grafikhardware", report)
+        self.assertIn("AMD (dediziert, Treiber: amdgpu, 16.0 GiB VRAM)", report)
+        self.assertIn("VRAM-Werte sind treiberabhängig", report)
+
     def test_strukturierte_diagnose_ordnet_status_und_journal_zu(self):
         def executor(arguments, **_kwargs):
             unit = arguments[3] if arguments[0] == "systemctl" else "journal"

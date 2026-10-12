@@ -3,6 +3,10 @@
 
 ## Unveröffentlicht
 
+- Hardwarebewusste, unprivilegierte GPU-Erkennung in der Systemdiagnose:
+  sichtbare DRM-Grafikadapter, Treiber und optionaler dedizierter VRAM; klare
+  Hinweise bei Sandbox- und Berechtigungseinschränkungen.
+
 - GUI-Polishing: verständliche Vorschau-Bezeichnung, Hilfetexte, anpassungsfähige
   Schaltflächen, anfängerfreundlicher Leerzustand, Tastenkürzel `Strg+S` und
   `Strg+R` sowie Wiederherstellung von Fenstergröße und zuletzt geöffneter Ansicht.

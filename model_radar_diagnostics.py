@@ -50,12 +50,14 @@ def _properties(text: str) -> dict[str, str]:
 
 def collect_diagnostic_data(executor: Callable | None = None) -> dict:
     """Sammelt maschinenlesbare Statusfelder, Befunde und Empfehlungen."""
+    graphics = radar_platform.detect_graphics()
     if executor is None:
         status = radar_platform.SystemdScheduler.query_status()
         if status.error:
             return {
                 "schema_version": 1, "program_version": model_radar.VERSION,
                 "service": {}, "timer": {}, "journal": "Kein Dienstjournal verfügbar.",
+                "graphics": graphics,
                 "findings": [{
                     "severity": "info", "title": "Automatische Prüfung nicht verfügbar",
                     "detail": status.error,
@@ -137,6 +139,7 @@ def collect_diagnostic_data(executor: Callable | None = None) -> dict:
         "timer": timer,
         "findings": findings,
         "journal": journal_result.output or "Keine Journalzeilen verfügbar.",
+        "graphics": graphics,
     }
 
 
@@ -145,6 +148,7 @@ def render_diagnostics(data: dict) -> str:
     service = data.get("service", {})
     timer = data.get("timer", {})
     findings = data.get("findings", [])
+    graphics = data.get("graphics", {})
 
     lines = [
         "LLM-Modellradar – strukturierte Dienstdiagnose",
@@ -168,9 +172,27 @@ def render_diagnostics(data: dict) -> str:
         f"Nächster Start: {timer.get('NextElapseUSecRealtime', 'unbekannt')}",
         f"Unit-Datei: {timer.get('FragmentPath', 'unbekannt')}",
         "",
+        "Grafikhardware (sichtbar für diesen Prozess)",
+        "---------------------------------------------",
+    ]
+    adapters = graphics.get("adapters", []) if isinstance(graphics, dict) else []
+    if adapters:
+        for adapter in adapters:
+            vram = adapter.get("vram_bytes")
+            vram_text = f"{int(vram) / (1024 ** 3):.1f} GiB VRAM" if isinstance(vram, int) else "VRAM unbekannt"
+            lines.append(
+                f"- {adapter.get('card', 'GPU')}: {adapter.get('vendor', 'unbekannt')} "
+                f"({adapter.get('kind', 'unbekannt')}, Treiber: {adapter.get('driver', 'unbekannt')}, {vram_text})"
+            )
+    else:
+        lines.append("- Keine sichtbaren Grafikadapter.")
+    for limitation in graphics.get("limitations", []) if isinstance(graphics, dict) else []:
+        lines.append(f"  Hinweis: {limitation}")
+    lines.extend([
+        "",
         "Bewertung",
         "---------",
-    ]
+    ])
     for finding in findings:
         severity = str(finding.get("severity", "info")).upper()
         lines.append(f"- [{severity}] {finding.get('title', 'Befund')}: {finding.get('detail', '')}")
