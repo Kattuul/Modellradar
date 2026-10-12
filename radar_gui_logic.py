@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,70 @@ def data_directory() -> Path:
     if os.environ.get("FLATPAK_ID"):
         return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "qwen35-model-radar"
     return Path.home() / ".local" / "share" / "qwen35-model-radar"
+
+
+def gui_preferences_path() -> Path:
+    """Liefert einen kleinen, von der Fachkonfiguration getrennten GUI-Zustand."""
+    state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    return state_home / "qwen35-model-radar" / "gui-preferences.json"
+
+
+def load_gui_preferences(path: Path | None = None) -> dict[str, int]:
+    """Lädt ausschließlich harmlose Darstellungswerte aus einer lokalen Datei."""
+    target = path or gui_preferences_path()
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, int] = {}
+    for key, lower, upper in (("page", 0, 1), ("width", 700, 2400), ("height", 560, 1600)):
+        value = raw.get(key)
+        if isinstance(value, int) and lower <= value <= upper:
+            result[key] = value
+    return result
+
+
+def save_gui_preferences(values: dict[str, int], path: Path | None = None) -> None:
+    """Speichert Fenstergröße und letzte Ansicht atomar, nie die Radarkonfiguration."""
+    target = path or gui_preferences_path()
+    safe = {
+        key: value for key, value in values.items()
+        if key in {"page", "width", "height"} and isinstance(value, int)
+    }
+    model_radar.atomic_write(target, json.dumps(safe, indent=2) + "\n")
+
+
+def report_summary(report: str) -> dict[str, str]:
+    """Entnimmt dem menschenlesbaren Bericht einen robusten Kurzüberblick."""
+    values = {
+        "checked_at": "Unbekannt",
+        "repositories": "0",
+        "changes": "0",
+        "new": "0",
+        "updated": "0",
+        "removed": "0",
+        "returned": "0",
+    }
+    patterns = {
+        "checked_at": r"^Prüfzeitpunkt \(UTC\):\s*(.+)$",
+        "repositories": r"^Passende Repositories:\s*(\d+)$",
+        "changes": r"^Erkannte Lebenszyklusänderungen:\s*(\d+)$",
+    }
+    for line in report.splitlines():
+        for key, pattern in patterns.items():
+            match = re.match(pattern, line)
+            if match:
+                values[key] = match.group(1)
+        status = re.match(r"^\[(NEU|AKTUALISIERT|ENTFERNT|WIEDER ERSCHIENEN)\]", line)
+        if status:
+            key = {
+                "NEU": "new", "AKTUALISIERT": "updated", "ENTFERNT": "removed",
+                "WIEDER ERSCHIENEN": "returned",
+            }[status.group(1)]
+            values[key] = str(int(values[key]) + 1)
+    return values
 
 
 def validate_data_path(value: str, label: str) -> str:

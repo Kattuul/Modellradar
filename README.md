@@ -121,21 +121,32 @@ sudo dnf install python3 python3-gobject gobject-introspection gtk4 libadwaita l
 
 Bei unveränderlichen Images können diese Abhängigkeiten vom jeweiligen Image
 bereitgestellt werden. Die Benutzerinstallation verändert keine Systemdateien.
-Ein eigenständiges Paket, das die GUI-Abhängigkeiten mitliefert, ist noch nicht
-Bestandteil dieser Änderung.
+Alternativ bringt das unter „GUI-Paket“ beschriebene Flatpak die grafische
+Laufzeit mit.
 
 Die GUI bearbeitet sämtliche Konfigurationsfelder, zeigt den gespeicherten
-Bericht an und bietet Schaltflächen für Dry-Run, sofortige Prüfung sowie das
-Aktivieren und Deaktivieren des Timers. Netzwerkprüfungen laufen in einem
+Bericht an und bietet Schaltflächen für eine **Vorschau ohne Änderungen**,
+sofortige Prüfung sowie das Aktivieren und Deaktivieren des Timers.
+Netzwerkprüfungen laufen in einem
 Hintergrundprozess, während eine pulsierende Fortschrittsanzeige sichtbar ist;
 der Lauf kann direkt abgebrochen werden. Nach einer erfolgreichen regulären
-Prüfung wird der gespeicherte Bericht automatisch geladen. Eine eigene
+Prüfung wird der gespeicherte Bericht automatisch geladen und zeigt eine
+Kurzbilanz für neue, aktualisierte, entfernte und wieder erschienene Modelle.
+Bericht und Diagnose können ohne Terminal in die Zwischenablage kopiert werden.
+Eine eigene
 Schaltfläche zeigt eine strukturierte Diagnose mit Dienst- und Timerzustand,
 letztem Ergebnis, Prozessstatus, Unit-Pfaden, Zeitpunkten und den letzten 30
 Journalzeilen. Befunde erscheinen nach Fehler, Warnung und Information getrennt.
 Passende Aktionen erlauben direkt das Aktivieren des Timers, den Wechsel zur
 Konfiguration, eine erneute Prüfung oder das Wiederholen der Diagnose. Befehle
 werden immer als Argumentliste ohne Shell gestartet.
+
+Beim ersten Aufruf erklärt ein Leerzustand den nächsten sicheren Schritt. Die
+Timeraktivierung verlangt eine Bestätigung, weil sie regelmäßige
+Netzwerkprüfungen einschaltet. Fehlermeldungen bleiben kurz; technische Details
+sind bei Bedarf aufklappbar. `Strg+S` speichert die Einstellungen, `Strg+R`
+startet eine Prüfung. Fenstergröße und zuletzt geöffneter Reiter werden lokal
+als reine Darstellungspräferenz gespeichert.
 
 Neben dem nächsten täglichen Timerstart zeigt die Oberfläche den letzten
 erfolgreichen API-Lauf und die aus `check_interval_days` berechnete tatsächliche

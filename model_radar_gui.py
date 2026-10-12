@@ -44,7 +44,10 @@ class RadarWindow(Adw.ApplicationWindow):
         self.command_runner = CommandRunner()
         self.timer_controller = TimerController()
         self._busy = False
-        self.set_default_size(920, 720)
+        self.preferences = logic.load_gui_preferences()
+        self.set_default_size(
+            self.preferences.get("width", 920), self.preferences.get("height", 720),
+        )
         self.set_size_request(700, 560)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -70,10 +73,38 @@ class RadarWindow(Adw.ApplicationWindow):
         self.notebook = Gtk.Notebook(hexpand=True, vexpand=True)
         self.notebook.append_page(self.settings_page, Gtk.Label(label="Einstellungen"))
         self.notebook.append_page(self.actions_page, Gtk.Label(label="Prüfung und Bericht"))
+        self.notebook.set_current_page(self.preferences.get("page", 0))
+        self.notebook.connect("switch-page", self._remember_page)
         outer.append(self.notebook)
         self.set_content(outer)
+        self._install_shortcuts()
+        self.connect("close-request", self._save_preferences)
         self.refresh_timer_status()
         self.refresh_check_status()
+
+    def _install_shortcuts(self) -> None:
+        for name, callback, shortcuts in (
+            ("save", lambda *_: self.on_save(), ("<Ctrl>s",)),
+            ("run-check", lambda *_: self.run_radar("force"), ("<Ctrl>r",)),
+        ):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", callback)
+            self.add_action(action)
+            self.get_application().set_accels_for_action(f"win.{name}", list(shortcuts))
+
+    def _remember_page(self, _notebook, _page, page_num: int) -> None:
+        self.preferences["page"] = page_num
+
+    def _save_preferences(self, *_args) -> bool:
+        width, height = self.get_width(), self.get_height()
+        if width < 700 or height < 560:
+            width, height = self.get_default_size()
+        self.preferences.update(page=self.notebook.get_current_page(), width=width, height=height)
+        try:
+            logic.save_gui_preferences(self.preferences)
+        except OSError:
+            pass
+        return False
 
     def on_save(self, _button=None) -> bool:
         try:
@@ -100,10 +131,13 @@ class RadarWindow(Adw.ApplicationWindow):
         if self._busy:
             return
         self.set_busy(True, description)
+        self.actions_page.clear_error()
 
         def finish(result: CommandResult) -> None:
             self.actions_page.set_output(result.output)
             self.set_busy(False, result.status_text())
+            if result.returncode != 0 and not result.cancelled:
+                self.actions_page.set_error(result.status_text(), result.output)
             if callback:
                 callback(result)
 
@@ -147,10 +181,12 @@ class RadarWindow(Adw.ApplicationWindow):
     def load_report(self, _button=None) -> None:
         try:
             path = Path(self.settings_page.collect_config()["report_file"]).expanduser()
-            self.actions_page.set_output(path.read_text(encoding="utf-8"))
+            report = path.read_text(encoding="utf-8")
+            self.actions_page.set_report(report, logic.report_summary(report))
+            self.actions_page.clear_error()
             self.actions_page.set_status(f"Bericht geladen: {path}")
         except (model_radar.RadarError, OSError) as exc:
-            self.actions_page.set_status(f"Bericht kann nicht geladen werden: {exc}")
+            self.actions_page.set_error("Bericht kann nicht geladen werden.", str(exc))
 
     def refresh_timer_status(self) -> None:
         self.timer_controller.refresh(self.actions_page.set_timer_status)
@@ -163,6 +199,27 @@ class RadarWindow(Adw.ApplicationWindow):
         self.actions_page.set_check_status(text)
 
     def set_timer(self, enable: bool) -> None:
+        if enable:
+            self._confirm_timer_enable()
+            return
+        self._change_timer(False)
+
+    def _confirm_timer_enable(self) -> None:
+        dialog = Adw.MessageDialog.new(
+            self,
+            "Automatische Prüfungen aktivieren?",
+            "Der Timer startet künftig im Hintergrund regelmäßige Netzwerkprüfungen. "
+            "Modelle werden dabei weder heruntergeladen noch ausgeführt.",
+        )
+        dialog.add_response("cancel", "Abbrechen")
+        dialog.add_response("enable", "Timer aktivieren")
+        dialog.set_response_appearance("enable", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", lambda _dialog, response: self._change_timer(True) if response == "enable" else None)
+        dialog.present()
+
+    def _change_timer(self, enable: bool) -> None:
         self.run_command(
             self.timer_controller.change_command(enable),
             "Timer wird geändert …",

@@ -299,27 +299,38 @@ class ActionsPage(Gtk.Box):
             margin_start=24,
             margin_end=24,
         )
-        button_box = Gtk.Box(spacing=10)
-        self.dry_button = Gtk.Button(label="Dry-Run starten")
+        button_box = Gtk.FlowBox(
+            selection_mode=Gtk.SelectionMode.NONE, column_spacing=10, row_spacing=10,
+        )
+        self.dry_button = Gtk.Button(label="Vorschau ohne Änderungen")
+        self.dry_button.set_tooltip_text("Prüft die API, speichert aber weder Zustand noch Bericht.")
         self.dry_button.connect("clicked", on_dry_run)
         self.run_button = Gtk.Button(label="Jetzt prüfen")
         self.run_button.add_css_class("suggested-action")
+        self.run_button.set_tooltip_text("Startet eine reguläre Prüfung und aktualisiert danach den Bericht.")
         self.run_button.connect("clicked", on_force_run)
         self.cancel_button = Gtk.Button(label="Lauf abbrechen", sensitive=False)
+        self.cancel_button.set_tooltip_text("Fordert den Abbruch der aktuell laufenden Prüfung an.")
         self.cancel_button.connect("clicked", on_cancel)
         self.report_button = Gtk.Button(label="Gespeicherten Bericht laden")
+        self.report_button.set_tooltip_text("Lädt den zuletzt erfolgreich gespeicherten Bericht.")
         self.report_button.connect("clicked", on_load_report)
         for button in (self.dry_button, self.run_button, self.cancel_button, self.report_button):
             button_box.append(button)
         self.append(button_box)
 
-        timer_box = Gtk.Box(spacing=10)
+        timer_box = Gtk.FlowBox(
+            selection_mode=Gtk.SelectionMode.NONE, column_spacing=10, row_spacing=10,
+        )
         self.timer_label = Gtk.Label(label="Timerstatus wird geladen …", xalign=0, hexpand=True)
         self.enable_button = Gtk.Button(label="Timer aktivieren")
+        self.enable_button.set_tooltip_text("Fragt vor der Aktivierung nach, weil automatische Netzwerkprüfungen starten.")
         self.enable_button.connect("clicked", on_enable_timer)
         self.disable_button = Gtk.Button(label="Timer deaktivieren")
+        self.disable_button.set_tooltip_text("Beendet nur automatische Prüfungen; manuelle Prüfungen bleiben möglich.")
         self.disable_button.connect("clicked", on_disable_timer)
         self.diagnostic_button = Gtk.Button(label="Dienstdiagnose")
+        self.diagnostic_button.set_tooltip_text("Prüft nur den lokalen Dienst- und Timerstatus.")
         self.diagnostic_button.connect("clicked", on_diagnostics)
         timer_box.append(self.timer_label)
         timer_box.append(self.enable_button)
@@ -329,6 +340,9 @@ class ActionsPage(Gtk.Box):
 
         self.check_label = Gtk.Label(label="API-Prüfstatus wird geladen …", xalign=0, wrap=True)
         self.append(self.check_label)
+        self.summary_label = Gtk.Label(xalign=0, wrap=True, visible=False)
+        self.summary_label.add_css_class("card")
+        self.append(self.summary_label)
 
         self.diagnostic_panel = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, spacing=8, visible=False,
@@ -361,14 +375,52 @@ class ActionsPage(Gtk.Box):
         self.status_label = Gtk.Label(label="Bereit", xalign=0, wrap=True)
         self.status_label.add_css_class("dim-label")
         self.append(self.status_label)
+        self.error_details = Gtk.Expander(label="Technische Details anzeigen", visible=False)
+        self.error_label = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        self.error_label.add_css_class("error")
+        self.error_details.set_child(self.error_label)
+        self.append(self.error_details)
         self.progress = Gtk.ProgressBar(show_text=True, text="Vorgang läuft …", visible=False)
         self.append(self.progress)
         self._pulse_source = 0
+        self.report_text = ""
+        self.diagnostic_text = ""
+        copy_box = Gtk.FlowBox(
+            selection_mode=Gtk.SelectionMode.NONE, column_spacing=10, row_spacing=10,
+        )
+        self.copy_report_button = Gtk.Button(label="Bericht kopieren")
+        self.copy_report_button.set_tooltip_text("Kopiert den vollständigen Bericht in die Zwischenablage.")
+        self.copy_report_button.connect("clicked", lambda *_: self._copy_text(self.report_text, "Bericht"))
+        self.copy_diagnostic_button = Gtk.Button(label="Diagnose kopieren")
+        self.copy_diagnostic_button.set_tooltip_text("Kopiert die Dienstdiagnose in die Zwischenablage.")
+        self.copy_diagnostic_button.connect("clicked", lambda *_: self._copy_text(self.diagnostic_text, "Diagnose"))
+        copy_box.append(self.copy_report_button)
+        copy_box.append(self.copy_diagnostic_button)
+        self.append(copy_box)
+        self.copy_report_button.set_sensitive(False)
+        self.copy_diagnostic_button.set_sensitive(False)
+        self.empty_state = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, valign=Gtk.Align.CENTER)
+        heading = Gtk.Label(label="Bereit für die erste Prüfung", xalign=0)
+        heading.add_css_class("title-2")
+        self.empty_state.append(heading)
+        self.empty_state.append(Gtk.Label(
+            label="Mit „Jetzt prüfen“ werden die freigegebenen Modellquellen abgefragt. "
+            "Es werden keine Modelle heruntergeladen oder ausgeführt.",
+            xalign=0, wrap=True,
+        ))
+        begin_button = Gtk.Button(label="Jetzt prüfen")
+        begin_button.add_css_class("suggested-action")
+        begin_button.connect("clicked", on_force_run)
+        self.empty_state.append(begin_button)
         self.output_view = SettingsPage._text_view("Noch keine Ausgabe.", True, 400)
         self.output_view.set_editable(False)
         scroll = Gtk.ScrolledWindow(vexpand=True)
         scroll.set_child(self.output_view)
-        self.append(scroll)
+        self.output_stack = Gtk.Stack(vexpand=True)
+        self.output_stack.add_named(self.empty_state, "empty")
+        self.output_stack.add_named(scroll, "output")
+        self.output_stack.set_visible_child_name("empty")
+        self.append(self.output_stack)
         self._update_timer_buttons()
 
     def set_busy(self, busy: bool) -> None:
@@ -396,8 +448,36 @@ class ActionsPage(Gtk.Box):
     def set_status(self, text: str) -> None:
         self.status_label.set_text(text)
 
+    def set_error(self, summary: str, details: str) -> None:
+        """Zeigt eine verständliche Meldung; Rohdetails bleiben einklappbar."""
+        self.status_label.set_text(summary)
+        self.error_label.set_text(details.strip() or "Keine technischen Details verfügbar.")
+        self.error_details.set_expanded(False)
+        self.error_details.set_visible(True)
+
+    def clear_error(self) -> None:
+        self.error_details.set_visible(False)
+
     def set_output(self, text: str) -> None:
         self.output_view.get_buffer().set_text(text or "Keine Ausgabe.")
+        self.output_stack.set_visible_child_name("output")
+
+    def set_report(self, report: str, summary: dict[str, str]) -> None:
+        self.report_text = report
+        self.copy_report_button.set_sensitive(bool(report))
+        self.summary_label.set_text(
+            "Letzte Prüfung: {checked_at}\nPassende Repositories: {repositories} · Änderungen: {changes}\n"
+            "Neu: {new} · Aktualisiert: {updated} · Entfernt: {removed} · Wieder erschienen: {returned}".format(**summary)
+        )
+        self.summary_label.set_visible(True)
+        self.set_output(report)
+
+    def _copy_text(self, text: str, label: str) -> None:
+        if not text:
+            self.set_status(f"Kein {label.lower()} zum Kopieren vorhanden.")
+            return
+        self.get_clipboard().set(text)
+        self.set_status(f"{label} in die Zwischenablage kopiert.")
 
     def set_timer_status(self, status: TimerStatus) -> None:
         self.timer_label.set_text(status.display_text())
@@ -509,4 +589,6 @@ class ActionsPage(Gtk.Box):
         self.diagnostic_panel.set_visible(True)
         journal = str(data.get("journal") or "Keine Journalzeilen verfügbar.")
         detail_lines.extend(["Letzte Journalzeilen", "-------------------", journal])
-        self.set_output("\n".join(detail_lines) + "\n")
+        self.diagnostic_text = "\n".join(detail_lines) + "\n"
+        self.copy_diagnostic_button.set_sensitive(True)
+        self.set_output(self.diagnostic_text)

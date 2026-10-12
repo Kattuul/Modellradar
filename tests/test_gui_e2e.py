@@ -87,6 +87,8 @@ class GtkWorkflowTests(unittest.TestCase):
         self.assertFalse(self.window._busy)
         self.assertFalse(self.window.actions_page.progress.get_visible())
         self.assertEqual(self.output_text(self.window), "AUTOMATISCH GELADENER BERICHT\n")
+        self.assertTrue(self.window.actions_page.summary_label.get_visible())
+        self.assertTrue(self.window.actions_page.copy_report_button.get_sensitive())
 
     def test_abgebrochener_lauf_lädt_keinen_alten_bericht(self):
         with mock.patch("radar_gui_logic.validate_data_path", side_effect=lambda value, _label: value):
@@ -136,7 +138,35 @@ class GtkWorkflowTests(unittest.TestCase):
         page.diagnostic_action_buttons["open_settings"].emit("clicked")
         self.assertEqual(self.window.notebook.get_current_page(), 0)
 
-        page.diagnostic_action_buttons["enable_timer"].emit("clicked")
+        with mock.patch.object(self.window, "_confirm_timer_enable") as confirm:
+            page.diagnostic_action_buttons["enable_timer"].emit("clicked")
+        confirm.assert_called_once()
+        self.window._change_timer(True)
+        self.assertEqual(
+            self.runner.command,
+            ["systemctl", "--user", "enable", "--now", "qwen35-model-radar.timer"],
+        )
+        self.assertTrue(page.copy_diagnostic_button.get_sensitive())
+
+    def test_leerzustand_und_fehlerdetails_sind_verstaendlich(self):
+        page = self.window.actions_page
+        self.assertEqual(page.output_stack.get_visible_child_name(), "empty")
+        self.window.run_command(["unbekannt"], "Test")
+        self.runner.callback(CommandResult(2, "Konkretes technisches Detail"))
+        self.assertTrue(page.error_details.get_visible())
+        self.assertIn("Exitcode 2", page.status_label.get_text())
+        self.assertIn("Konkretes", page.error_label.get_text())
+
+    def test_timeraktivierung_braucht_bestaetigung(self):
+        dialog = mock.Mock()
+        with mock.patch("model_radar_gui.Adw.MessageDialog.new", return_value=dialog):
+            self.window.set_timer(True)
+        self.assertEqual(self.runner.command, None)
+        self.assertIn(mock.call("enable", "Timer aktivieren"), dialog.add_response.call_args_list)
+        response_callback = dialog.connect.call_args.args[1]
+        response_callback(dialog, "cancel")
+        self.assertEqual(self.runner.command, None)
+        response_callback(dialog, "enable")
         self.assertEqual(
             self.runner.command,
             ["systemctl", "--user", "enable", "--now", "qwen35-model-radar.timer"],

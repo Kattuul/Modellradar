@@ -73,6 +73,28 @@ class RadarGuiLogicTests(unittest.TestCase):
             self.assertIn("noch keine", logic.check_status_text(config))
             self.assertIn("jetzt fällig", logic.check_status_text(config))
 
+    def test_berichtskurzueberblick_zaehlt_lebenszyklusereignisse(self):
+        report = """Prüfzeitpunkt (UTC): 2026-10-12T08:30:00+00:00
+Passende Repositories: 7
+Erkannte Lebenszyklusänderungen: 4
+[NEU] Qwen/Neu
+[AKTUALISIERT] Qwen/Aktuell
+[ENTFERNT] Qwen/Alt
+[WIEDER ERSCHIENEN] Qwen/Zurueck
+"""
+        self.assertEqual(logic.report_summary(report), {
+            "checked_at": "2026-10-12T08:30:00+00:00", "repositories": "7", "changes": "4",
+            "new": "1", "updated": "1", "removed": "1", "returned": "1",
+        })
+
+    def test_gui_praeferenzen_sind_getrennt_und_fehlertolerant(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state" / "gui-preferences.json"
+            logic.save_gui_preferences({"page": 1, "width": 1000, "height": 700, "ignored": 9}, path)
+            self.assertEqual(logic.load_gui_preferences(path), {"page": 1, "width": 1000, "height": 700})
+            path.write_text("kein JSON", encoding="utf-8")
+            self.assertEqual(logic.load_gui_preferences(path), {})
+
 
 if __name__ == "__main__":
     unittest.main()

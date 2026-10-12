@@ -3,6 +3,15 @@
 
 ## Unveröffentlicht
 
+- GUI-Polishing: verständliche Vorschau-Bezeichnung, Hilfetexte, anpassungsfähige
+  Schaltflächen, anfängerfreundlicher Leerzustand, Tastenkürzel `Strg+S` und
+  `Strg+R` sowie Wiederherstellung von Fenstergröße und zuletzt geöffneter Ansicht.
+- Bericht zeigt einen Kurzüberblick über Zeit, Treffer und alle vier
+  Lebenszyklusereignisse; Bericht und Dienstdiagnose lassen sich in die
+  Zwischenablage kopieren. Fehlerdetails sind einklappbar.
+- Timeraktivierung verlangt eine explizite Bestätigung mit Hinweis auf die
+  regelmäßigen Netzwerkprüfungen.
+
 - Eigene Projektdateien unter GPL-3.0-or-later gestellt; Lizenztext, SPDX-Kennzeichnungen
   und Drittanbieterhinweise ergänzt. Native Installation und neue Flatpak-Pakete enthalten die Hinweise.
 
