@@ -40,6 +40,7 @@ from radar_gui_components import (  # noqa: E402
     SettingsPage,
     TimerController,
     TimerStatus,
+    describe,
 )
 
 # Erhöhen, wenn sich die Einführung so stark ändert, dass alle sie erneut sehen sollen.
@@ -76,22 +77,26 @@ class RadarWindow(Adw.ApplicationWindow):
         header.set_title_widget(Gtk.Label(label="LLM-Modellradar"))
         self.main_menu = Gio.Menu()
         primary = Gio.Menu()
-        primary.append("Einstellungen", "win.preferences")
-        primary.append("Einführung erneut anzeigen", "win.onboarding")
+        # Unterstriche markieren Zugriffstasten, solange das Menü offen ist.
+        primary.append("_Einstellungen", "win.preferences")
+        primary.append("Ein_führung erneut anzeigen", "win.onboarding")
         more_checks = Gio.Menu()
-        more_checks.append("Vorschau ohne Änderungen", "win.dry-run")
-        primary.append_submenu("Weitere Prüfoptionen", more_checks)
-        primary.append("Dienstdiagnose", "win.diagnostics")
+        more_checks.append("_Vorschau ohne Änderungen", "win.dry-run")
+        primary.append_submenu("_Weitere Prüfoptionen", more_checks)
+        primary.append("_Dienstdiagnose", "win.diagnostics")
         self.main_menu.append_section(None, primary)
         about = Gio.Menu()
-        about.append("Tastenkürzel", "win.shortcuts")
-        about.append("Über Modellradar", "win.about")
+        about.append("_Tastenkürzel", "win.shortcuts")
+        about.append("Ü_ber Modellradar", "win.about")
         self.main_menu.append_section(None, about)
-        menu_button = Gtk.MenuButton(
+        # primary: F10 öffnet das Menü, wie in GNOME-Anwendungen üblich.
+        self.menu_button = menu_button = Gtk.MenuButton(
             icon_name="open-menu-symbolic",
             menu_model=self.main_menu,
             tooltip_text="Hauptmenü",
+            primary=True,
         )
+        describe(menu_button, "Hauptmenü")
         header.pack_end(menu_button)
 
         self.settings_page = SettingsPage(self.config)
@@ -139,6 +144,8 @@ class RadarWindow(Adw.ApplicationWindow):
         self.set_content(self.toast_overlay)
         self._install_shortcuts()
         self.connect("close-request", self._save_preferences)
+        # Die Hauptaktion erhält den ersten Fokus, nicht das Menü in der Kopfleiste.
+        self.set_focus(self.dashboard.run_button)
         self.refresh_timer_status()
         self.refresh_check_status()
         self.load_report(announce=False)
@@ -168,7 +175,7 @@ class RadarWindow(Adw.ApplicationWindow):
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header = Adw.HeaderBar()
         header.set_title_widget(Gtk.Label(label="Einstellungen"))
-        save_button = Gtk.Button(label="Speichern")
+        save_button = Gtk.Button(label="_Speichern", use_underline=True)
         save_button.add_css_class("suggested-action")
         save_button.connect("clicked", self.on_save)
         header.pack_end(save_button)
@@ -181,6 +188,11 @@ class RadarWindow(Adw.ApplicationWindow):
         save_shortcuts.add_shortcut(Gtk.Shortcut.new(
             Gtk.ShortcutTrigger.parse_string("<Ctrl>s"),
             Gtk.CallbackAction.new(lambda *_: self.on_save() or True),
+        ))
+        # Adw.Window schließt anders als Dialoge nicht von selbst mit Escape.
+        save_shortcuts.add_shortcut(Gtk.Shortcut.new(
+            Gtk.ShortcutTrigger.parse_string("Escape"),
+            Gtk.CallbackAction.new(lambda *_: window.close() or True),
         ))
         window.add_controller(save_shortcuts)
         self.settings_save_button = save_button
@@ -476,8 +488,8 @@ class RadarWindow(Adw.ApplicationWindow):
             "Der Radar prüft künftig regelmäßig im Hintergrund über das Netzwerk. "
             "Modelle werden dabei weder heruntergeladen noch ausgeführt.",
         )
-        dialog.add_response("cancel", "Abbrechen")
-        dialog.add_response("enable", "Einschalten")
+        dialog.add_response("cancel", "_Abbrechen")
+        dialog.add_response("enable", "_Einschalten")
         dialog.set_response_appearance("enable", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("cancel")
         dialog.set_close_response("cancel")

@@ -210,6 +210,7 @@ class SettingsPage(Adw.PreferencesPage):
         api_row = Adw.ActionRow(title="API-Adresse", subtitle=config["api_url"])
         api_row.set_subtitle_selectable(True)
         api_row.set_tooltip_text("Aus Sicherheitsgründen fest auf Hugging Face begrenzt.")
+        describe(api_row, "API-Adresse", "Aus Sicherheitsgründen fest auf Hugging Face begrenzt.")
         advanced.add(api_row)
         self.state_entry = Adw.EntryRow(title="Zustandsdatei", text=str(config["state_file"]))
         advanced.add(self.state_entry)
@@ -225,7 +226,7 @@ class SettingsPage(Adw.PreferencesPage):
     def _widget_row(group: Adw.PreferencesGroup, title: str, subtitle: str, widget: Gtk.Widget) -> Adw.ActionRow:
         row = Adw.ActionRow(title=title, subtitle=subtitle)
         widget.set_valign(Gtk.Align.CENTER)
-        widget.update_property([Gtk.AccessibleProperty.LABEL], [title])
+        describe(widget, title, subtitle)
         row.add_suffix(widget)
         row.set_activatable_widget(widget)
         group.add(row)
@@ -256,7 +257,7 @@ class SettingsPage(Adw.PreferencesPage):
         for side in ("top", "bottom", "left", "right"):
             getattr(view, f"set_{side}_margin")(8)
         box.append(Gtk.Frame(child=scroll))
-        view.update_property([Gtk.AccessibleProperty.LABEL], [title])
+        describe(view, title, hint)
         group.add(Gtk.ListBoxRow(child=box, activatable=False))
 
     @staticmethod
@@ -305,6 +306,29 @@ def _plain(text: str) -> str:
     return GLib.markup_escape_text(text)
 
 
+def describe(widget: Gtk.Widget, label: str, description: str = "") -> None:
+    """Setzt Name und optionale Beschreibung, die Screenreader vorlesen."""
+    properties, values = [Gtk.AccessibleProperty.LABEL], [label]
+    if description:
+        properties.append(Gtk.AccessibleProperty.DESCRIPTION)
+        values.append(description)
+    widget.update_property(properties, values)
+
+
+def announce(widget: Gtk.Widget, text: str, important: bool = False) -> None:
+    """Liest Statuswechsel vor; erst ab GTK 4.14 möglich, ältere Systeme zeigen sie nur an."""
+    if not text or not hasattr(widget, "announce"):
+        return
+    priority = Gtk.AccessibleAnnouncementPriority
+    widget.announce(text, priority.HIGH if important else priority.MEDIUM)
+
+
+def has_focus_within(widget: Gtk.Widget) -> bool:
+    root = widget.get_root()
+    focus = root.get_focus() if root is not None else None
+    return focus is not None and (focus is widget or focus.is_ancestor(widget))
+
+
 def copy_to_clipboard(widget: Gtk.Widget, text: str, label: str, notify: Callable[[str], None]) -> None:
     if not text:
         notify(f"Kein {label} zum Kopieren vorhanden.")
@@ -313,8 +337,9 @@ def copy_to_clipboard(widget: Gtk.Widget, text: str, label: str, notify: Callabl
     notify(f"{label} in die Zwischenablage kopiert.")
 
 
-def _readonly_text_view() -> tuple[Gtk.TextView, Gtk.ScrolledWindow]:
+def _readonly_text_view(label: str) -> tuple[Gtk.TextView, Gtk.ScrolledWindow]:
     view = SettingsPage._text_view("", True, 300)
+    describe(view, label)
     view.set_editable(False)
     view.set_cursor_visible(False)
     scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
@@ -324,7 +349,7 @@ def _readonly_text_view() -> tuple[Gtk.TextView, Gtk.ScrolledWindow]:
 
 def _icon_button(icon: str, tooltip: str, callback) -> Gtk.Button:
     button = Gtk.Button(icon_name=icon, tooltip_text=tooltip)
-    button.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
+    describe(button, tooltip)
     button.connect("clicked", callback)
     return button
 
@@ -374,14 +399,20 @@ class NavigationHost:
             self.widget.push_by_tag(tag)
             return
         self._history.append(tag)
-        self.widget.set_visible_child_name(tag)
+        self._show(tag)
 
     def pop(self) -> None:
         if self.native:
             self.widget.pop()
         elif len(self._history) > 1:
             self._history.pop()
-            self.widget.set_visible_child_name(self._history[-1])
+            self._show(self._history[-1])
+
+    def _show(self, tag: str) -> None:
+        # Gtk.Stack lässt den Fokus sonst auf der verborgenen Seite zurück.
+        self.widget.set_visible_child_name(tag)
+        if self.widget.get_mapped():
+            self.widget.get_visible_child().child_focus(Gtk.DirectionType.TAB_FORWARD)
 
     def pop_to_root(self) -> None:
         while self.visible_tag() != "dashboard":
@@ -409,16 +440,17 @@ class _StatefulPage(Gtk.Box):
             valign=Gtk.Align.CENTER, halign=Gtk.Align.CENTER,
         )
         self.spinner = Gtk.Spinner(width_request=32, height_request=32)
+        describe(self.spinner, "Wird geladen")
         loading.append(self.spinner)
         self.loading_label = Gtk.Label(label=loading_text, wrap=True, justify=Gtk.Justification.CENTER)
         loading.append(self.loading_label)
-        cancel = Gtk.Button(label="Abbrechen", halign=Gtk.Align.CENTER)
+        cancel = Gtk.Button(label="_Abbrechen", use_underline=True, halign=Gtk.Align.CENTER)
         cancel.connect("clicked", on_cancel)
         loading.append(cancel)
         self.stack.add_named(loading, "loading")
         self.error_page = Adw.StatusPage(icon_name="dialog-warning-symbolic", title="Das hat nicht geklappt")
         error_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        self.error_details = Gtk.Expander(label="Technische Details anzeigen")
+        self.error_details = Gtk.Expander(label="_Technische Details anzeigen", use_underline=True)
         self.error_label = Gtk.Label(xalign=0, wrap=True, selectable=True)
         self.error_details.set_child(self.error_label)
         error_box.append(self.error_details)
@@ -432,25 +464,37 @@ class _StatefulPage(Gtk.Box):
     def state(self) -> str:
         return self.stack.get_visible_child_name()
 
+    def _switch(self, state: str) -> None:
+        """Wechselt den Zustand, ohne den Tastaturfokus im Nichts zu verlieren."""
+        root = self.get_root()
+        focus = root.get_focus() if root is not None else None
+        # Ein deaktivierter Kopfleisten-Button verliert den Fokus bereits beim Start.
+        follow = self.get_mapped() and (focus is None or has_focus_within(self.stack))
+        self.stack.set_visible_child_name(state)
+        if follow:
+            self.stack.get_visible_child().child_focus(Gtk.DirectionType.TAB_FORWARD)
+
     def set_loading(self) -> None:
         self.spinner.start()
-        self.stack.set_visible_child_name("loading")
+        self._switch("loading")
+        announce(self, self.loading_label.get_text())
 
     def show_result(self) -> None:
         self.spinner.stop()
-        self.stack.set_visible_child_name("result")
+        self._switch("result")
 
     def restore(self, state: str) -> None:
         """Kehrt nach einem Abbruch zum vorher sichtbaren Zustand zurück."""
         self.spinner.stop()
-        self.stack.set_visible_child_name(state)
+        self._switch(state)
 
     def set_error(self, summary: str, details: str) -> None:
         self.spinner.stop()
         self.error_page.set_description(_plain(summary))
         self.error_label.set_text(details.strip() or "Keine technischen Details verfügbar.")
         self.error_details.set_expanded(False)
-        self.stack.set_visible_child_name("error")
+        self._switch("error")
+        announce(self, f"Das hat nicht geklappt. {summary}", important=True)
 
 
 class DashboardPage(Gtk.ScrolledWindow):
@@ -479,12 +523,12 @@ class DashboardPage(Gtk.ScrolledWindow):
         box.append(self.check_label)
 
         button_box = Gtk.Box(spacing=10)
-        self.run_button = Gtk.Button(label="Jetzt prüfen")
+        self.run_button = Gtk.Button(label="_Jetzt prüfen", use_underline=True)
         self.run_button.add_css_class("suggested-action")
         self.run_button.add_css_class("pill")
         self.run_button.set_tooltip_text("Startet eine reguläre Prüfung und aktualisiert danach den Bericht.")
         self.run_button.connect("clicked", on_force_run)
-        self.cancel_button = Gtk.Button(label="Lauf abbrechen", sensitive=False, visible=False)
+        self.cancel_button = Gtk.Button(label="Lauf _abbrechen", use_underline=True, sensitive=False, visible=False)
         self.cancel_button.add_css_class("pill")
         self.cancel_button.set_tooltip_text("Fordert den Abbruch der aktuell laufenden Prüfung an.")
         self.cancel_button.connect("clicked", on_cancel)
@@ -493,18 +537,19 @@ class DashboardPage(Gtk.ScrolledWindow):
         box.append(button_box)
 
         self.progress = Gtk.ProgressBar(show_text=True, text="Vorgang läuft …", visible=False)
+        describe(self.progress, "Fortschritt")
         box.append(self.progress)
         self._pulse_source = 0
         self.status_label = Gtk.Label(label="Bereit", xalign=0, wrap=True)
         self.status_label.add_css_class("dim-label")
         box.append(self.status_label)
-        self.error_details = Gtk.Expander(label="Technische Details anzeigen", visible=False)
+        self.error_details = Gtk.Expander(label="_Technische Details anzeigen", use_underline=True, visible=False)
         error_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.error_label = Gtk.Label(xalign=0, wrap=True, selectable=True)
         self.error_label.add_css_class("error")
         error_box.append(self.error_label)
         # Bei Fehlern führt der nächste Schritt direkt zur Diagnose.
-        self.diagnose_button = Gtk.Button(label="Dienstdiagnose öffnen", halign=Gtk.Align.START)
+        self.diagnose_button = Gtk.Button(label="Dienst_diagnose öffnen", use_underline=True, halign=Gtk.Align.START)
         self.diagnose_button.connect("clicked", on_diagnostics)
         error_box.append(self.diagnose_button)
         self.error_details.set_child(error_box)
@@ -518,23 +563,24 @@ class DashboardPage(Gtk.ScrolledWindow):
         self._timer_available = False
         self._busy = False
         self.timer_switch = Gtk.Switch(valign=Gtk.Align.CENTER, sensitive=False)
-        self.timer_switch.set_tooltip_text(
-            "Einschalten fragt nach, weil regelmäßige Netzwerkprüfungen im Hintergrund starten."
-        )
-        self.timer_switch.update_property([Gtk.AccessibleProperty.LABEL], ["Automatische Prüfungen"])
+        timer_hint = "Einschalten fragt nach, weil regelmäßige Netzwerkprüfungen im Hintergrund starten."
+        self.timer_switch.set_tooltip_text(timer_hint)
+        describe(self.timer_switch, "Automatische Prüfungen", timer_hint)
         self.timer_switch.connect("state-set", self._on_timer_switch)
-        self.timer_row = Adw.ActionRow(title="Automatische Prüfungen", subtitle="Status wird geladen …")
+        self.timer_row = Adw.ActionRow(
+            title="A_utomatische Prüfungen", use_underline=True, subtitle="Status wird geladen …",
+        )
         self.timer_row.add_suffix(self.timer_switch)
         self.timer_row.set_activatable_widget(self.timer_switch)
         overview.append(self.timer_row)
         self.report_row = self._navigation_row(
-            "Letztes Ergebnis", "Noch keine Prüfung durchgeführt – „Jetzt prüfen“ startet die erste.",
+            "_Letztes Ergebnis", "Noch keine Prüfung durchgeführt – „Jetzt prüfen“ startet die erste.",
             on_open_report,
         )
         self.report_row.set_sensitive(False)
         overview.append(self.report_row)
         self.hardware_row = self._navigation_row(
-            "Passend zu diesem Rechner", "Grafikkarte wird ermittelt …", on_open_hardware,
+            "_Passend zu diesem Rechner", "Grafikkarte wird ermittelt …", on_open_hardware,
         )
         overview.append(self.hardware_row)
         box.append(overview)
@@ -542,12 +588,14 @@ class DashboardPage(Gtk.ScrolledWindow):
 
     @staticmethod
     def _navigation_row(title: str, subtitle: str, callback) -> Adw.ActionRow:
-        row = Adw.ActionRow(title=title, subtitle=subtitle, activatable=True, subtitle_lines=0)
+        row = Adw.ActionRow(title=title, subtitle=subtitle, activatable=True, subtitle_lines=0, use_underline=True)
         row.add_suffix(Gtk.Image(icon_name="go-next-symbolic", accessible_role=Gtk.AccessibleRole.PRESENTATION))
         row.connect("activated", callback)
         return row
 
     def set_busy(self, busy: bool) -> None:
+        # Der Fokus folgt der jeweils verfügbaren Aktion, statt mit dem Button zu verschwinden.
+        move_focus = has_focus_within(self.run_button if busy else self.cancel_button)
         self._busy = busy
         self.run_button.set_sensitive(not busy)
         self.diagnose_button.set_sensitive(not busy)
@@ -561,6 +609,8 @@ class DashboardPage(Gtk.ScrolledWindow):
             GLib.source_remove(self._pulse_source)
             self._pulse_source = 0
             self.progress.set_fraction(0)
+        if move_focus:
+            (self.cancel_button if busy else self.run_button).grab_focus()
 
     def _pulse(self) -> bool:
         self.progress.pulse()
@@ -568,10 +618,12 @@ class DashboardPage(Gtk.ScrolledWindow):
 
     def set_status(self, text: str) -> None:
         self.status_label.set_text(text)
+        announce(self.status_label, text)
 
     def set_error(self, summary: str, details: str) -> None:
         """Zeigt eine verständliche Meldung; Rohdetails bleiben einklappbar."""
         self.status_label.set_text(summary)
+        announce(self.status_label, summary, important=True)
         self.error_label.set_text(details.strip() or "Keine technischen Details verfügbar.")
         self.error_details.set_expanded(False)
         self.error_details.set_visible(True)
@@ -649,7 +701,7 @@ class ReportPage(_StatefulPage):
         self.summary_label = Gtk.Label(xalign=0, wrap=True)
         self.summary_label.add_css_class("heading")
         result.append(self.summary_label)
-        self.text_view, scroll = _readonly_text_view()
+        self.text_view, scroll = _readonly_text_view("Berichtstext")
         result.append(scroll)
         self.add_result(result)
 
@@ -716,7 +768,7 @@ class HardwarePage(_StatefulPage):
         graphics_list.append(self.graphics_row)
         intro.append(graphics_list)
         self.prepend(intro)
-        self.text_view, scroll = _readonly_text_view()
+        self.text_view, scroll = _readonly_text_view("Ergebnis der Hardware-Eignung")
         scroll.set_margin_top(12)
         scroll.set_margin_bottom(12)
         scroll.set_margin_start(12)
@@ -735,6 +787,7 @@ class HardwarePage(_StatefulPage):
         self.text_view.get_buffer().set_text(text or "Keine Ausgabe.")
         self.copy_button.set_sensitive(bool(text))
         self.show_result()
+        announce(self, "Hardware-Eignung berechnet.")
 
 
 class DiagnosticsPage(_StatefulPage):
@@ -763,10 +816,10 @@ class DiagnosticsPage(_StatefulPage):
         content.append(self.diagnostic_findings)
         actions = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, column_spacing=8, row_spacing=8)
         self.diagnostic_action_buttons = {
-            "enable_timer": Gtk.Button(label="Automatische Prüfungen einschalten"),
-            "open_settings": Gtk.Button(label="Konfiguration prüfen"),
-            "run_check": Gtk.Button(label="Prüfung erneut starten"),
-            "retry_diagnostics": Gtk.Button(label="Diagnose wiederholen"),
+            "enable_timer": Gtk.Button(label="Automatische Prüfungen _einschalten", use_underline=True),
+            "open_settings": Gtk.Button(label="_Konfiguration prüfen", use_underline=True),
+            "run_check": Gtk.Button(label="Prüfung erneut _starten", use_underline=True),
+            "retry_diagnostics": Gtk.Button(label="Diagnose _wiederholen", use_underline=True),
         }
         callbacks = {
             "enable_timer": on_enable_timer,
@@ -779,8 +832,8 @@ class DiagnosticsPage(_StatefulPage):
             button.set_visible(False)
             actions.append(button)
         content.append(actions)
-        self.details = Gtk.Expander(label="Technische Details anzeigen")
-        self.text_view, scroll = _readonly_text_view()
+        self.details = Gtk.Expander(label="_Technische Details anzeigen", use_underline=True)
+        self.text_view, scroll = _readonly_text_view("Technische Diagnosedaten")
         scroll.set_min_content_height(240)
         self.details.set_child(scroll)
         content.append(self.details)
@@ -926,6 +979,7 @@ class DiagnosticsPage(_StatefulPage):
         self.text_view.get_buffer().set_text(self.diagnostic_text)
         self.details.set_expanded(False)
         self.show_result()
+        announce(self, self.diagnostic_title.get_text(), important=bool(counts["error"]))
 
 
 
@@ -943,39 +997,43 @@ class OnboardingView(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self._on_finish = on_finish
         self._finished = False
+        self._page_texts: list[str] = []
 
         self.carousel = Adw.Carousel(vexpand=True, allow_scroll_wheel=False)
         self.carousel.append(self._welcome_page())
         self.carousel.append(self._hardware_page())
         self.carousel.append(self._start_page())
-        self.carousel.connect("page-changed", lambda *_: self._update_navigation())
+        self.carousel.connect("page-changed", self._on_page_changed)
         self.append(self.carousel)
 
         navigation = Gtk.CenterBox(margin_top=6, margin_bottom=18, margin_start=18, margin_end=18)
-        self.back_button = Gtk.Button(label="Zurück")
+        self.back_button = Gtk.Button(label="_Zurück", use_underline=True)
         self.back_button.connect("clicked", lambda *_: self.go_to(self.position() - 1))
-        self.next_button = Gtk.Button(label="Weiter")
+        self.next_button = Gtk.Button(label="_Weiter", use_underline=True)
         self.next_button.add_css_class("suggested-action")
         self.next_button.connect("clicked", lambda *_: self.go_to(self.position() + 1))
         navigation.set_start_widget(self.back_button)
-        navigation.set_center_widget(Adw.CarouselIndicatorDots(carousel=self.carousel))
+        # Die Punkte sind rein optisch; den Schritt nennt die Titelzeile auch in Worten.
+        navigation.set_center_widget(Adw.CarouselIndicatorDots(
+            carousel=self.carousel, accessible_role=Gtk.AccessibleRole.PRESENTATION,
+        ))
         navigation.set_end_widget(self.next_button)
         self.append(navigation)
 
         self.step_label = Gtk.Label()
         self.step_label.add_css_class("dim-label")
-        self.skip_button = Gtk.Button(label="Überspringen")
+        self.skip_button = Gtk.Button(label="Ü_berspringen", use_underline=True)
         self.skip_button.set_tooltip_text("Schließt die Einführung. Sie bleibt über das Hauptmenü erreichbar.")
         self.skip_button.connect("clicked", lambda *_: self.finish(False))
         self._update_navigation()
 
-    @staticmethod
-    def _page(icon: str, title: str, description: str, *children: Gtk.Widget) -> Gtk.Widget:
+    def _page(self, icon: str, title: str, description: str, *children: Gtk.Widget) -> Gtk.Widget:
         # Adw.StatusPage scrollt selbst; das hält auch kleine Bildschirme bedienbar.
         page = Adw.StatusPage(
             icon_name=icon, title=title, description=description, hexpand=True, vexpand=True,
         )
         page.add_css_class("compact")
+        self._page_texts.append(f"{title}. {description}")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         for child in children:
             box.append(child)
@@ -1034,11 +1092,13 @@ class OnboardingView(Gtk.Box):
             ("computer-symbolic", "3. Optional: „Hardware-Eignung“",
              "Zeigt, welche Modelldateien voraussichtlich in den Grafikspeicher passen."),
         )
-        self.start_button = Gtk.Button(label="Erste Prüfung starten", halign=Gtk.Align.CENTER)
+        self.start_button = Gtk.Button(label="_Erste Prüfung starten", use_underline=True, halign=Gtk.Align.CENTER)
         self.start_button.add_css_class("suggested-action")
         self.start_button.add_css_class("pill")
         self.start_button.connect("clicked", lambda *_: self.finish(True))
-        self.look_around_button = Gtk.Button(label="Erst einmal umsehen", halign=Gtk.Align.CENTER)
+        self.look_around_button = Gtk.Button(
+            label="Erst einmal _umsehen", use_underline=True, halign=Gtk.Align.CENTER,
+        )
         self.look_around_button.add_css_class("flat")
         self.look_around_button.connect("clicked", lambda *_: self.finish(False))
         return self._page(
@@ -1075,6 +1135,12 @@ class OnboardingView(Gtk.Box):
         index = max(0, min(index, self.carousel.get_n_pages() - 1))
         self.carousel.scroll_to(self.carousel.get_nth_page(index), True)
         self._update_navigation(index)
+
+    def _on_page_changed(self, _carousel, index: int) -> None:
+        self._update_navigation()
+        # Der Fokus landet auf „Weiter“; ohne Ansage bliebe der neue Seiteninhalt ungelesen.
+        if self.get_mapped():
+            announce(self, f"{self.step_label.get_text()}. {self._page_texts[index]}")
 
     def _update_navigation(self, index: int | None = None) -> None:
         index = self.position() if index is None else index

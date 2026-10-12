@@ -198,7 +198,7 @@ class GtkWorkflowTests(unittest.TestCase):
         with mock.patch.object(self.window, "_confirmation_dialog", return_value=dialog):
             self.window.set_timer(True)
         self.assertEqual(self.runner.command, None)
-        self.assertIn(mock.call("enable", "Einschalten"), dialog.add_response.call_args_list)
+        self.assertIn(mock.call("enable", "_Einschalten"), dialog.add_response.call_args_list)
         response_callback = dialog.connect.call_args.args[1]
         with mock.patch.object(self.window, "refresh_timer_status") as refresh:
             response_callback(dialog, "cancel")
@@ -450,6 +450,137 @@ class GtkWorkflowTests(unittest.TestCase):
         host.pop()
         self.assertEqual(host.visible_tag(), "dashboard")
 
+
+    # --- Barrierefreiheit -------------------------------------------------
+
+    @staticmethod
+    def descendants(widget):
+        stack = [widget]
+        while stack:
+            current = stack.pop()
+            yield current
+            child = current.get_last_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_prev_sibling()
+
+    def present_and_settle(self, window=None):
+        window = window or self.window
+        window.present()
+        self.spin_until(window.get_mapped)
+
+    def test_startfokus_liegt_auf_hauptaktion_und_folgt_dem_lauf(self):
+        self.present_and_settle()
+        page = self.window.dashboard
+        self.assertIs(self.window.get_focus(), page.run_button)
+        page.run_button.emit("clicked")
+        # Der deaktivierte Startbutton darf den Fokus nicht ins Leere fallen lassen.
+        self.assertIs(self.window.get_focus(), page.cancel_button)
+        self.runner.callback(CommandResult(0, ""))
+        self.assertIs(self.window.get_focus(), page.run_button)
+
+    def test_zugriffstasten_sind_je_ansicht_eindeutig(self):
+        def mnemonics(root):
+            keys = []
+            for widget in self.descendants(root):
+                if not widget.get_visible():
+                    continue
+                if isinstance(widget, (Gtk.Button, Gtk.Expander)):
+                    label = widget.get_label()
+                elif isinstance(widget, Adw.PreferencesRow):
+                    label = widget.get_title()
+                else:
+                    continue
+                if label and widget.get_use_underline() and "_" in label:
+                    keys.append(label[label.index("_") + 1].lower())
+            return keys
+
+        dashboard = mnemonics(self.window.dashboard)
+        for expected in ("j", "u", "l", "p"):
+            self.assertIn(expected, dashboard)
+        self.assertEqual(len(dashboard), len(set(dashboard)), dashboard)
+        self.window.lookup_action("onboarding").activate(None)
+        view = self.window.onboarding_view
+        for position in range(3):
+            view.go_to(position)
+            keys = mnemonics(view) + mnemonics(view.skip_button)
+            self.assertEqual(len(keys), len(set(keys)), keys)
+            self.assertIn("b", keys)
+
+    def test_bedienelemente_haben_namen_fuer_screenreader(self):
+        controls = (Gtk.Button, Gtk.MenuButton, Gtk.Switch, Gtk.SpinButton, Gtk.TextView, Gtk.ProgressBar, Gtk.Spinner)
+        # Interne Teile von GTK/libadwaita benennen diese Bibliotheken selbst.
+        internal = (Gtk.SpinButton, Gtk.MenuButton, Gtk.WindowControls, Gtk.Expander, Adw.Banner, Adw.EntryRow)
+        roots = (self.window.navigation.widget, self.window.report_page, self.window.hardware_page,
+                 self.window.diagnostics_page, self.window.settings_page)
+        unnamed = []
+        for root in roots:
+            for widget in self.descendants(root):
+                if not isinstance(widget, controls) or any(
+                    isinstance(ancestor, internal) for ancestor in self.ancestors(widget, root)
+                ):
+                    continue
+                named = isinstance(widget, Gtk.Button) and bool(widget.get_label())
+                if not named and not Gtk.test_accessible_has_property(widget, Gtk.AccessibleProperty.LABEL):
+                    unnamed.append(f"{type(widget).__name__} in {type(widget.get_parent()).__name__}")
+        self.assertEqual(unnamed, [])
+        self.assertTrue(self.window.menu_button.get_primary())
+
+    @staticmethod
+    def ancestors(widget, stop):
+        parent = widget.get_parent()
+        while parent is not None and parent is not stop:
+            yield parent
+            parent = parent.get_parent()
+
+    def test_escape_schliesst_einstellungen(self):
+        self.window.open_settings()
+        settings = self.window.settings_window
+        self.assertTrue(settings.get_visible())
+        for controller in settings.observe_controllers():
+            if isinstance(controller, Gtk.ShortcutController):
+                for shortcut in controller:
+                    if shortcut.get_trigger().to_string() == "Escape":
+                        shortcut.get_action().activate(Gtk.ShortcutActionFlags.EXCLUSIVE, settings, None)
+        self.assertFalse(settings.get_visible())
+
+    def test_fokus_folgt_dem_zustand_einer_unterseite(self):
+        self.present_and_settle()
+        page = self.window.hardware_page
+        self.window.navigation.push("hardware")
+        self.spin_until(page.get_mapped)
+        page.refresh_button.grab_focus()
+        page.refresh_button.emit("clicked")
+        # Der Abbrechen-Button der Ladeansicht übernimmt den Fokus des deaktivierten Buttons.
+        focus = self.window.get_focus()
+        self.assertIsNotNone(focus)
+        self.assertTrue(focus.is_ancestor(page.stack.get_child_by_name("loading")))
+        self.runner.callback(CommandResult(1, "Netzwerkfehler"))
+        self.assertIs(self.window.get_focus(), page.error_details)
+
+    def test_unterseiten_ohne_navigationview_uebernehmen_den_fokus(self):
+        window = Gtk.Window()
+        self.addCleanup(window.destroy)
+        host = NavigationHost(native=False)
+        target = Gtk.Button(label="Ziel")
+        host.add("dashboard", "Start", Adw.HeaderBar(), Gtk.Button(label="Start"))
+        host.add("report", "Bericht", Adw.HeaderBar(show_start_title_buttons=False), target)
+        window.set_child(host.widget)
+        self.present_and_settle(window)
+        host.push("report")
+        focus = window.get_focus()
+        self.assertIsNotNone(focus)
+        self.assertTrue(focus.is_ancestor(host.widget.get_child_by_name("report")))
+
+    def test_diagnosezustand_ist_nicht_nur_farbcodiert(self):
+        self.window.lookup_action("diagnostics").activate(None)
+        self.runner.callback(CommandResult(0, json.dumps({
+            "schema_version": 1, "service": {}, "timer": {},
+            "findings": [{"severity": "warning", "title": "Timer aus"}],
+        })))
+        labels = [w.get_text() for w in self.descendants(self.window.diagnostics_page.diagnostic_findings)
+                  if isinstance(w, Gtk.Label)]
+        self.assertTrue(any(text.startswith("WARNUNG: Timer aus") for text in labels), labels)
 
 if __name__ == "__main__":
     unittest.main()
