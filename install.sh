@@ -47,7 +47,7 @@ RADAR_PYTHON=$(command -v "$RADAR_PYTHON") || { echo "Python 3 fehlt." >&2; exit
 "$RADAR_PYTHON" -c 'import sys; assert sys.version_info >= (3, 10), "Python 3.10 oder neuer erforderlich"'
 if [ "$HEADLESS" -eq 0 ]; then
     "$RADAR_PYTHON" -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1"); from gi.repository import Gtk, Adw' || {
-        echo "GUI-Abhängigkeiten fehlen. Debian/Ubuntu: python3-gi gir1.2-gtk-4.0 gir1.2-adw-1; Fedora: python3-gobject gtk4 libadwaita." >&2
+        echo "GUI-Abhängigkeiten fehlen. Debian/Ubuntu: python3-gi gir1.2-gtk-4.0 gir1.2-adw-1; Fedora: python3-gobject gobject-introspection gtk4 libadwaita." >&2
         echo "Für einen Server ohne Oberfläche: --headless verwenden." >&2
         exit 1
     }

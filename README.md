@@ -103,7 +103,7 @@ sudo apt install python3 python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 libnotify-bin
 Auf Fedora:
 
 ```bash
-sudo dnf install python3 python3-gobject gtk4 libadwaita libnotify
+sudo dnf install python3 python3-gobject gobject-introspection gtk4 libadwaita libnotify
 ```
 
 Bei unveränderlichen Images können diese Abhängigkeiten vom jeweiligen Image

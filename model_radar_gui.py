@@ -16,7 +16,7 @@ except (ImportError, ValueError) as exc:
     print(
         "GUI-Abhängigkeiten fehlen: Python/PyGObject, GTK 4 und libadwaita werden benötigt.\n"
         "Debian/Ubuntu: python3-gi gir1.2-gtk-4.0 gir1.2-adw-1\n"
-        "Fedora: python3-gobject gtk4 libadwaita\n"
+        "Fedora: python3-gobject gobject-introspection gtk4 libadwaita\n"
         f"Details: {exc}", file=sys.stderr,
     )
     raise SystemExit(2) from exc

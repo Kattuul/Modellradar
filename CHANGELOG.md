@@ -1,5 +1,10 @@
 # Änderungsprotokoll
 
+## Unveröffentlicht
+
+- Fedora-GUI-Abhängigkeiten um `gobject-introspection` ergänzt, damit auch in minimalen Images die Cairo-Typinformationen verfügbar sind.
+- CI prüft GTK-/libadwaita-Imports vor dem Testlauf; Installationshinweise entsprechend korrigiert.
+
 ## 2.6.0 – 2026-10-12
 
 - Expliziter Headless-Modus und GTK-freie Plattformadapter für Desktop und systemd.

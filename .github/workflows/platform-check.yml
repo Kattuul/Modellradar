@@ -35,8 +35,11 @@ jobs:
           if command -v apt-get >/dev/null; then
             apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 xvfb xauth dbus-x11
           else
-            dnf install -y python3-gobject gtk4 libadwaita xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11
+            dnf install -y python3-gobject gobject-introspection gtk4 libadwaita xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11
           fi
+      - name: Verify GUI imports before running tests
+        if: matrix.mode == 'gui'
+        run: python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1"); from gi.repository import Gtk, Adw; print("GTK/libadwaita imports OK")'
       - name: Check headless installation and core
         if: matrix.mode == 'headless'
         run: python3 release_check.py --headless
