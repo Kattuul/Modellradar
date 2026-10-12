@@ -3,13 +3,59 @@
 
 ## Unveröffentlicht
 
+- UI-Redesign: Einstellungen in vier Gruppen (Modellquellen, Automatische
+  Prüfungen, Netzwerk, Erweitert) mit libadwaita-Zeilen; `Strg+S` speichert
+  jetzt auch direkt im Einstellungsfenster. Automatische Prüfungen werden über
+  einen Schalter statt zweier Timer-Schaltflächen gesteuert.
+- Kurze Erfolgsmeldungen erscheinen als Toast, ein fehlender systemd-Dienst als
+  Banner mit Sprung zur Diagnose. Bestätigungen nutzen ab libadwaita 1.5
+  `Adw.AlertDialog`.
+- Hauptmenü mit Untermenü „Weitere Prüfoptionen“, Tastenkürzel-Übersicht
+  (`Strg+?`) und „Über Modellradar“. „Gespeicherten Bericht neu laden“ entfällt;
+  der Bericht wird beim Start automatisch geladen.
+- Einsteigerfreundliche Einführung beim ersten Start: drei überspringbare
+  Schritte (Was Modellradar tut, erkannte Grafikhardware und Timerzustand,
+  erste Prüfung starten), wiederaufrufbar über „Einführung erneut anzeigen“.
+  Der Stand wird als `onboarding_version` gespeichert; nach der ersten Prüfung
+  führt ein Hinweis zum Bericht. GTK-Tests schreiben ihre GUI-Präferenzen nicht
+  mehr in das echte Benutzerverzeichnis.
+- Eigene Unteransichten für Bericht, Hardware-Eignung und Dienstdiagnose
+  (`Adw.NavigationView` ab libadwaita 1.4, sonst Stack mit Zurück-Button). Die
+  Übersicht zeigt nur noch Prüfung, Status, Timer und Navigationszeilen samt
+  erkannter Grafikkarte. Jede Unteransicht hat eigene Lade-, Ergebnis- und
+  Fehlerzustände sowie Kopier- und Neu-berechnen-Aktionen; ein Abbruch stellt
+  das vorige Ergebnis wieder her. Die Vorschau erscheint als ungespeicherter
+  Bericht, Fehlermeldungen bieten direkt „Dienstdiagnose öffnen“.
+- Barrierefreiheit: verständliche Namen für alle Bedienelemente, eindeutige
+  Tastenkürzel, Fokus folgt Zustandswechseln, Screenreader-Ansagen für Lade-,
+  Ergebnis- und Fehlerzustände; Zustände sind zusätzlich zur Farbe per Text
+  und Symbol erkennbar.
+- Fenster, Einstellungen und Einführung passen auf 1024×600-Bildschirme;
+  auf niedrigen und schmalen Displays entfallen rein dekorative Elemente.
+- Bericht und Hardware-Eignung erscheinen als Karten mit Kennzahlen statt als
+  Fließtext; der Rohtext bleibt eingeklappt verfügbar.
+- Modellkarten-Links öffnen nur noch Adressen auf `https://huggingface.co`.
+- Bedienbarkeit per Tastatur und Screenreader (Prüfung mit Orca auf Debian 13):
+  Tab bleibt in der Einführung auf der sichtbaren Seite und beginnt auf
+  „Weiter“ statt „Überspringen“; mehrzeilige Einstellungsfelder fangen Tab
+  nicht mehr ab; die Diagnose hat keinen leeren Fokus-Halt mehr; Seitenansagen
+  nennen den Titel nur einmal.
+- Wird eine Unteransicht geöffnet, während noch eine Aufgabe läuft, erklärt sie
+  das und startet danach automatisch, statt leer zu bleiben. Ein fehlender
+  systemd-Timer heißt jetzt „Der Hintergrunddienst ist nicht installiert“
+  statt `not-found`.
+- Debian 12 (GTK 4.8, libadwaita 1.2) startet die GUI wieder: Die markierbare
+  API-Adresse nutzt `set_subtitle_selectable` nur, wo vorhanden. Die CI prüft
+  zusätzlich `debian:12-slim`; `container_check.sh` führt denselben
+  Release-Check lokal mit Podman oder Docker aus.
+
 - Hardwarebewusste, unprivilegierte GPU-Erkennung in der Systemdiagnose:
   sichtbare DRM-Grafikadapter, Treiber und optionaler dedizierter VRAM; klare
   Hinweise bei Sandbox- und Berechtigungseinschränkungen.
 
 - GUI-Polishing: verständliche Vorschau-Bezeichnung, Hilfetexte, anpassungsfähige
   Schaltflächen, anfängerfreundlicher Leerzustand, Tastenkürzel `Strg+S` und
-  `Strg+R` sowie Wiederherstellung von Fenstergröße und zuletzt geöffneter Ansicht.
+  `Strg+R` sowie Wiederherstellung der Fenstergröße.
 - Bericht zeigt einen Kurzüberblick über Zeit, Treffer und alle vier
   Lebenszyklusereignisse; Bericht und Dienstdiagnose lassen sich in die
   Zwischenablage kopieren. Fehlerdetails sind einklappbar.
@@ -24,6 +70,8 @@
 
 - Fedora-GUI-Abhängigkeiten um `gobject-introspection` ergänzt, damit auch in minimalen Images die Cairo-Typinformationen verfügbar sind.
 - CI prüft GTK-/libadwaita-Imports vor dem Testlauf; Installationshinweise entsprechend korrigiert.
+- CI und `container_check.sh` installieren unter Fedora zusätzlich `libglvnd-gles`; ohne
+  `libGLESv2.so.2` bricht GTK 4.22 in minimalen Images beim GUI-Test ab.
 
 ## 2.6.0 – 2026-10-12
 

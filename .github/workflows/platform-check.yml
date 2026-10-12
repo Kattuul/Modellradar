@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ["debian:stable-slim", "fedora:latest"]
+        image: ["debian:stable-slim", "debian:12-slim", "fedora:latest"]
         mode: [headless, gui]
     container: ${{ matrix.image }}
     steps:
@@ -36,7 +36,7 @@ jobs:
           if command -v apt-get >/dev/null; then
             apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 xvfb xauth dbus-x11
           else
-            dnf install -y python3-gobject gobject-introspection gtk4 libadwaita xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11
+            dnf install -y python3-gobject gobject-introspection gtk4 libadwaita libglvnd-gles xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11
           fi
       - name: Verify GUI imports before running tests
         if: matrix.mode == 'gui'

@@ -42,7 +42,9 @@ Die lokal durchgeführten Prüfungen sind im [Prüfprotokoll](packaging/flatpak/
 - `release_check.py`: automatisierter Syntax-, Test-, GTK- und Installationscheck
 - `CHANGELOG.md`: versioniertes Änderungsprotokoll
 - `.github/workflows/platform-check.yml`: getrennte GUI-/Headless-Prüfungen
-  in Debian- und Fedora-Containern bei Push und Pull Request
+  in Debian-13-, Debian-12- und Fedora-Containern bei Push und Pull Request
+- `container_check.sh`: dieselbe Prüfung lokal mit Podman oder Docker,
+  standardmäßig in Debian 12 (`./container_check.sh [image] [--headless]`)
 - `tests/fixtures/`: reproduzierbare, rein lokale API-Antworten
 - `state.json` (später unter `~/.local/share/...`): bekannte IDs, SHA,
   Kandidaten-Snapshots, Anwesenheitsstatus sowie `first_seen`, `last_seen`,
@@ -124,18 +126,35 @@ bereitgestellt werden. Die Benutzerinstallation verändert keine Systemdateien.
 Alternativ bringt das unter „GUI-Paket“ beschriebene Flatpak die grafische
 Laufzeit mit.
 
-Die GUI bearbeitet sämtliche Konfigurationsfelder, zeigt den gespeicherten
-Bericht an und priorisiert in der Hauptansicht die sofortige Prüfung, die
-Hardware-Eignung sowie das Aktivieren und Deaktivieren des Timers. Einstellungen,
-**Vorschau ohne Änderungen**, erneutes Laden des Berichts und Dienstdiagnose
-liegen im Hauptmenü.
+Die GUI bearbeitet sämtliche Konfigurationsfelder und ist hierarchisch
+aufgebaut: Die Übersicht enthält nur die sofortige Prüfung, den aktuellen
+Status, den Schalter **Automatische Prüfungen**, der den Timer ein- und
+ausschaltet, sowie die Zeilen „Letztes Ergebnis“ und „Passend zu diesem
+Rechner“. Diese führen in die Unteransichten **Bericht** und
+**Hardware-Eignung**; die **Dienstdiagnose** ist eine dritte Unteransicht.
+Jede Unteransicht zeigt eindeutig, ob sie lädt, ein Ergebnis hat oder ein
+Fehler aufgetreten ist, und bringt ihre eigene Kopier- beziehungsweise
+Neu-berechnen-Aktion mit. Ab libadwaita 1.4 nutzt die Navigation
+`Adw.NavigationView` (Zurück per Alt+←, Maustaste oder Wischgeste), ältere
+Versionen erhalten einen Zurück-Button. Die Hardware-Eignung wird beim ersten
+Öffnen berechnet und danach nur auf Wunsch erneut; eine **Vorschau ohne
+Änderungen** erscheint in der Berichtsansicht deutlich als ungespeichert
+markiert. Das Hauptmenü enthält Einstellungen, „Einführung erneut
+anzeigen“, das Untermenü
+„Weitere Prüfoptionen“ mit **Vorschau ohne Änderungen**, die Dienstdiagnose,
+eine Übersicht der Tastenkürzel und „Über Modellradar“. Der gespeicherte Bericht
+wird beim Start und nach jeder erfolgreichen Prüfung automatisch geladen.
+Die Einstellungen sind in die Gruppen Modellquellen, Automatische Prüfungen,
+Netzwerk und Erweitert gegliedert; Änderungen gelten erst nach **Speichern**.
 Netzwerkprüfungen laufen in einem
 Hintergrundprozess, während eine pulsierende Fortschrittsanzeige sichtbar ist;
 der Lauf kann direkt abgebrochen werden. Nach einer erfolgreichen regulären
 Prüfung wird der gespeicherte Bericht automatisch geladen und zeigt eine
 Kurzbilanz für neue, aktualisierte, entfernte und wieder erschienene Modelle.
-Bericht und Diagnose können ohne Terminal in die Zwischenablage kopiert werden;
-die jeweilige Kopieraktion erscheint erst, wenn passende Daten vorliegen.
+Bericht, Hardware-Eignung und Diagnose können ohne Terminal in die
+Zwischenablage kopiert werden; die jeweilige Kopieraktion ist erst aktiv, wenn
+passende Daten vorliegen. Schlägt ein Vorgang fehl, führt „Dienstdiagnose
+öffnen“ direkt aus der Fehlermeldung zur Diagnose.
 Der Menüpunkt „Dienstdiagnose“ zeigt eine strukturierte Diagnose mit Dienst- und
 Timerzustand, letztem Ergebnis, Prozessstatus, Unit-Pfaden, Zeitpunkten und den
 letzten 30 Journalzeilen. Befunde erscheinen nach Fehler, Warnung und Information
@@ -144,19 +163,33 @@ Passende Aktionen erlauben direkt das Aktivieren des Timers, den Wechsel zur
 Konfiguration, eine erneute Prüfung oder das Wiederholen der Diagnose. Befehle
 werden immer als Argumentliste ohne Shell gestartet.
 
-Beim ersten Aufruf erklärt ein Leerzustand den nächsten sicheren Schritt. Die
-Timeraktivierung verlangt eine Bestätigung, weil sie regelmäßige
-Netzwerkprüfungen einschaltet. Fehlermeldungen bleiben kurz; technische Details
-sind bei Bedarf aufklappbar. `Strg+,` öffnet die Einstellungen, `Strg+S`
-speichert sie und `Strg+R` startet eine Prüfung. Die Fenstergröße wird lokal
-als reine Darstellungspräferenz gespeichert.
+Beim ersten Start führt eine kurze, jederzeit überspringbare Einführung in drei
+Schritten in Alltagssprache durch die Anwendung: was Modellradar tut (und
+dass es keine Modelle herunterlädt oder ausführt), welche Grafikkarte und wie
+viel Grafikspeicher lokal erkannt wurden, ob automatische Prüfungen laufen, und
+wie die erste Prüfung gestartet wird. Die Hardwareerkennung läuft dabei im
+Hintergrund und wird nicht übertragen. Nach der ersten erfolgreichen Prüfung
+weist ein Hinweis auf den Bericht. Der Einführungsstand wird als
+`onboarding_version` neben der Fenstergröße gespeichert, sodass spätere größere
+Neuerungen gezielt erneut vorgestellt werden können. Solange noch kein Bericht
+existiert, erklärt ein Leerzustand den nächsten sicheren Schritt. Das
+Einschalten automatischer Prüfungen verlangt eine Bestätigung, weil es regelmäßige
+Netzwerkprüfungen startet. Kurze Erfolgsmeldungen erscheinen als
+vorübergehende Hinweise; ist der systemd-Benutzerdienst nicht erreichbar, weist
+ein dauerhaftes Banner mit Sprung zur Diagnose darauf hin. Fehlermeldungen
+bleiben kurz; technische Details sind bei Bedarf aufklappbar. `Strg+,` öffnet
+die Einstellungen, `Strg+S` speichert sie, `Strg+R` startet eine Prüfung und
+`Strg+?` zeigt alle Tastenkürzel. Fenstergröße und Einführungsstand werden lokal
+als reine Darstellungspräferenzen gespeichert.
 
 Neben dem nächsten täglichen Timerstart zeigt die Oberfläche den letzten
 erfolgreichen API-Lauf und die aus `check_interval_days` berechnete tatsächliche
 API-Fälligkeit an.
 
 Die Zuständigkeiten sind bewusst getrennt: `SettingsPage` besitzt das
-Konfigurationsformular, `ActionsPage` die Prüf- und Berichtselemente,
+Konfigurationsformular, `DashboardPage` die Übersicht mit Prüfung, Status und
+Timer, `ReportPage`, `HardwarePage` und `DiagnosticsPage` die gleichnamigen
+Unteransichten, `NavigationHost` die Navigation zwischen ihnen,
 `CommandRunner` die asynchrone Prozessausführung und `TimerController` die
 fest begrenzten systemd-Benutzerbefehle. `RadarWindow` verbindet diese Teile
 und koordiniert nur Speichern, Prüfablauf und Statusanzeige.

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,23 @@ def gui_preferences_path() -> Path:
     return state_home / "qwen35-model-radar" / "gui-preferences.json"
 
 
+# Kleinste sinnvolle Fenstergröße; passt auch auf 1024×600 neben Panels und Docks.
+MIN_WINDOW_SIZE = (480, 400)
+DEFAULT_WINDOW_SIZE = (920, 720)
+# Platz für Panels, Docks und Fensterrahmen, den die Monitorgeometrie nicht abzieht.
+SCREEN_RESERVE = (64, 64)
+
+
+def fit_window_size(
+    width: int, height: int, screen: tuple[int, int] | None, minimum: tuple[int, int] = MIN_WINDOW_SIZE,
+) -> tuple[int, int]:
+    """Verkleinert eine Wunschgröße so weit, dass das Fenster vollständig auf den Bildschirm passt."""
+    if screen:
+        width = min(width, screen[0] - SCREEN_RESERVE[0])
+        height = min(height, screen[1] - SCREEN_RESERVE[1])
+    return max(width, minimum[0]), max(height, minimum[1])
+
+
 def load_gui_preferences(path: Path | None = None) -> dict[str, int]:
     """Lädt ausschließlich harmlose Darstellungswerte aus einer lokalen Datei."""
     target = path or gui_preferences_path()
@@ -93,7 +111,9 @@ def load_gui_preferences(path: Path | None = None) -> dict[str, int]:
     if not isinstance(raw, dict):
         return {}
     result: dict[str, int] = {}
-    for key, lower, upper in (("width", 700, 2400), ("height", 560, 1600)):
+    for key, lower, upper in (
+        ("width", MIN_WINDOW_SIZE[0], 4000), ("height", MIN_WINDOW_SIZE[1], 3000), ("onboarding_version", 0, 1000),
+    ):
         value = raw.get(key)
         if isinstance(value, int) and lower <= value <= upper:
             result[key] = value
@@ -101,13 +121,47 @@ def load_gui_preferences(path: Path | None = None) -> dict[str, int]:
 
 
 def save_gui_preferences(values: dict[str, int], path: Path | None = None) -> None:
-    """Speichert die Fenstergröße atomar, nie die Radarkonfiguration."""
+    """Speichert Fenstergröße und Einführungsstand atomar, nie die Radarkonfiguration."""
     target = path or gui_preferences_path()
     safe = {
         key: value for key, value in values.items()
-        if key in {"width", "height"} and isinstance(value, int)
+        if key in {"width", "height", "onboarding_version"} and isinstance(value, int)
     }
     model_radar.atomic_write(target, json.dumps(safe, indent=2) + "\n")
+
+
+def _gib(value: int) -> str:
+    return f"{value / (1024 ** 3):.1f}".replace(".", ",") + " GiB"
+
+
+def graphics_summary(graphics: dict[str, Any]) -> tuple[str, str]:
+    """Beschreibt die sichtbare Grafikhardware in Alltagssprache für Einsteiger."""
+    adapters = [item for item in graphics.get("adapters", []) if isinstance(item, dict)]
+    limitations = [str(item) for item in graphics.get("limitations", []) if item]
+    if not adapters:
+        title = "Keine Grafikkarte erkannt"
+        lines = [
+            "Neue Modelle werden trotzdem gemeldet. Ob sie auf diesen Rechner passen, "
+            "lässt sich ohne Angaben zum Grafikspeicher aber nur grob einschätzen."
+        ]
+    else:
+        lines = []
+        for adapter in adapters:
+            vram = adapter.get("vram_bytes")
+            memory = f"{_gib(vram)} Grafikspeicher" if isinstance(vram, int) and vram > 0 else "Grafikspeicher unbekannt"
+            kind = {"dediziert": "eigene Grafikkarte", "integriert": "im Prozessor eingebaut"}.get(
+                adapter.get("kind"), "Bauart unbekannt",
+            )
+            lines.append(f"{adapter.get('vendor', 'Unbekannter Hersteller')} · {kind} · {memory}")
+        dedicated = [
+            item["vram_bytes"] for item in adapters
+            if item.get("kind") == "dediziert" and isinstance(item.get("vram_bytes"), int) and item["vram_bytes"] > 0
+        ]
+        title = (
+            f"Grafikkarte mit {_gib(max(dedicated))} Grafikspeicher erkannt" if dedicated
+            else "Grafik erkannt, Grafikspeicher unbekannt"
+        )
+    return title, "\n".join(lines + [f"Hinweis: {item}" for item in limitations])
 
 
 def report_summary(report: str) -> dict[str, str]:
@@ -139,6 +193,78 @@ def report_summary(report: str) -> dict[str, str]:
             }[status.group(1)]
             values[key] = str(int(values[key]) + 1)
     return values
+
+
+REPORT_STATUS_LABELS = {
+    "NEU": "Neu", "AKTUALISIERT": "Aktualisiert", "ENTFERNT": "Entfernt",
+    "WIEDER ERSCHIENEN": "Wieder erschienen",
+}
+HARDWARE_RATING_LABELS = {
+    "GUT PASSEND": "Gut passend", "EINGESCHRÄNKT": "Eingeschränkt",
+    "UNBEKANNT": "Unbekannt", "NICHT EMPFOHLEN": "Nicht empfohlen",
+}
+_ENTRY_PATTERN = re.compile(r"^\[([A-ZÄÖÜ ]+)\] (\S+)$")
+_FIELD_PATTERN = re.compile(r"^  ([^:]+): (.*)$")
+
+
+def _entries(text: str, labels: dict[str, str]) -> list[dict[str, Any]]:
+    """Liest eingerückte Einträge der Form „[STATUS] repo“ samt „  Feld: Wert“."""
+    entries: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for line in text.splitlines():
+        match = _ENTRY_PATTERN.match(line)
+        if match and match.group(1) in labels:
+            current = {"status": match.group(1), "repo_id": match.group(2), "fields": {}}
+            entries.append(current)
+            continue
+        field = _FIELD_PATTERN.match(line) if current is not None else None
+        if field:
+            current["fields"][field.group(1)] = field.group(2)
+        else:
+            current = None
+    return entries
+
+
+def report_events(report: str) -> list[dict[str, Any]]:
+    """Entnimmt dem Bericht die Lebenszyklusereignisse für die Kartenansicht."""
+    return _entries(report, REPORT_STATUS_LABELS)
+
+
+def hardware_result(text: str) -> dict[str, Any]:
+    """Zerlegt die Hardware-Eignung in VRAM-Angabe, Hinweise und Bewertungen."""
+    vram = re.search(r"^Sichtbarer dedizierter VRAM:\s*(.+)$", text, re.MULTILINE)
+    return {
+        "vram": vram.group(1).replace(".", ",") if vram else "",
+        "notes": re.findall(r"^Hinweis:\s*(.+)$", text, re.MULTILINE),
+        "items": _entries(text, HARDWARE_RATING_LABELS),
+    }
+
+
+def model_card_uri(value: str | None) -> str | None:
+    """Lässt nur Modellkarten auf huggingface.co zu; Berichte sind Dateien und könnten verändert sein."""
+    if not value:
+        return None
+    parsed = urllib.parse.urlparse(value.strip())
+    if parsed.scheme != "https" or parsed.hostname != "huggingface.co" or parsed.port is not None:
+        return None
+    if parsed.username or parsed.password:
+        return None
+    return parsed.geturl()
+
+
+def format_timestamp(value: str) -> str:
+    """Formatiert ISO-Zeitstempel aus Berichten lesbar; Unbekanntes bleibt unverändert."""
+    parsed = model_radar.parse_timestamp(value)
+    return _format_utc(parsed) if parsed is not None else value
+
+
+def format_timer_time(value: str) -> str:
+    """Kürzt systemd-Zeiten wie „Tue 2026-10-13 00:09:53 CEST“ auf „13.10.2026 00:09 CEST“."""
+    match = re.search(r"(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::\d{2})?(?: (\S+))?", value)
+    if not match:
+        return value
+    year, month, day, hour, minute, zone = match.groups()
+    return f"{day}.{month}.{year} {hour}:{minute}" + (f" {zone}" if zone else "")
 
 
 def validate_data_path(value: str, label: str) -> str:
