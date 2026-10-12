@@ -8,6 +8,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 try:
     import gi
@@ -31,6 +32,14 @@ from radar_gui_components import (  # noqa: E402
     CommandRunner,
     SettingsPage,
     TimerController,
+    TimerStatus,
+)
+
+SHORTCUTS = (
+    ("Jetzt prüfen", "<Ctrl>r"),
+    ("Einstellungen öffnen", "<Ctrl>comma"),
+    ("Einstellungen speichern", "<Ctrl>s"),
+    ("Tastenkürzel anzeigen", "<Ctrl>question"),
 )
 
 
@@ -54,10 +63,17 @@ class RadarWindow(Adw.ApplicationWindow):
         header = Adw.HeaderBar()
         header.set_title_widget(Gtk.Label(label="LLM-Modellradar"))
         self.main_menu = Gio.Menu()
-        self.main_menu.append("Einstellungen", "win.preferences")
-        self.main_menu.append("Vorschau ohne Änderungen", "win.dry-run")
-        self.main_menu.append("Gespeicherten Bericht neu laden", "win.reload-report")
-        self.main_menu.append("Dienstdiagnose", "win.diagnostics")
+        primary = Gio.Menu()
+        primary.append("Einstellungen", "win.preferences")
+        more_checks = Gio.Menu()
+        more_checks.append("Vorschau ohne Änderungen", "win.dry-run")
+        primary.append_submenu("Weitere Prüfoptionen", more_checks)
+        primary.append("Dienstdiagnose", "win.diagnostics")
+        self.main_menu.append_section(None, primary)
+        about = Gio.Menu()
+        about.append("Tastenkürzel", "win.shortcuts")
+        about.append("Über Modellradar", "win.about")
+        self.main_menu.append_section(None, about)
         menu_button = Gtk.MenuButton(
             icon_name="open-menu-symbolic",
             menu_model=self.main_menu,
@@ -76,13 +92,23 @@ class RadarWindow(Adw.ApplicationWindow):
             lambda *_: self.set_timer(False),
             self.show_diagnostics,
             self.open_settings,
+            notify=self.show_toast,
         )
-        outer.append(self.actions_page)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        # Adw.Banner gibt es erst ab libadwaita 1.3; ältere Systeme zeigen nur den Status.
+        self.banner = Adw.Banner(button_label="Diagnose") if hasattr(Adw, "Banner") else None
+        if self.banner is not None:
+            self.banner.connect("button-clicked", self.show_diagnostics)
+            body.append(self.banner)
+        body.append(self.actions_page)
+        self.toast_overlay = Adw.ToastOverlay(child=body, vexpand=True)
+        outer.append(self.toast_overlay)
         self.set_content(outer)
         self._install_shortcuts()
         self.connect("close-request", self._save_preferences)
         self.refresh_timer_status()
         self.refresh_check_status()
+        self.load_report(announce=False)
 
     def _install_shortcuts(self) -> None:
         for name, callback, shortcuts in (
@@ -90,8 +116,9 @@ class RadarWindow(Adw.ApplicationWindow):
             ("save", lambda *_: self.on_save(), ("<Ctrl>s",)),
             ("run-check", lambda *_: self.run_radar("force"), ("<Ctrl>r",)),
             ("dry-run", lambda *_: self.run_radar("dry"), ()),
-            ("reload-report", self.load_report, ()),
             ("diagnostics", self.show_diagnostics, ()),
+            ("shortcuts", self.show_shortcuts, ("<Ctrl>question",)),
+            ("about", self.show_about, ()),
         ):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
@@ -111,10 +138,21 @@ class RadarWindow(Adw.ApplicationWindow):
         save_button.connect("clicked", self.on_save)
         header.pack_end(save_button)
         content.append(header)
-        content.append(self.settings_page)
+        self.settings_toast_overlay = Adw.ToastOverlay(child=self.settings_page, vexpand=True)
+        content.append(self.settings_toast_overlay)
         window.set_content(content)
+        # Strg+S gilt sonst nur im Hauptfenster, nicht im Einstellungsfenster.
+        save_shortcuts = Gtk.ShortcutController()
+        save_shortcuts.add_shortcut(Gtk.Shortcut.new(
+            Gtk.ShortcutTrigger.parse_string("<Ctrl>s"),
+            Gtk.CallbackAction.new(lambda *_: self.on_save() or True),
+        ))
+        window.add_controller(save_shortcuts)
         self.settings_save_button = save_button
         return window
+
+    def show_toast(self, text: str) -> None:
+        self.toast_overlay.add_toast(Adw.Toast(title=text))
 
     def _save_preferences(self, *_args) -> bool:
         width, height = self.get_width(), self.get_height()
@@ -133,19 +171,19 @@ class RadarWindow(Adw.ApplicationWindow):
             logic.save_config(self.config_path, config)
             self.config = config
             self.settings_page.accept_config(config)
-            self.actions_page.set_status(f"Gespeichert: {self.config_path}")
             self.refresh_check_status()
             self.settings_window.set_visible(False)
+            self.show_toast("Einstellungen gespeichert")
             return True
         except (model_radar.RadarError, OSError) as exc:
-            self.actions_page.set_status(f"Fehler: {exc}")
             self.settings_window.present()
+            self.settings_toast_overlay.add_toast(Adw.Toast(title=f"Nicht gespeichert: {exc}", timeout=0))
             return False
 
     def set_busy(self, busy: bool, message: str = "") -> None:
         self._busy = busy
         self.settings_save_button.set_sensitive(not busy)
-        for name in ("save", "run-check", "dry-run", "reload-report", "diagnostics"):
+        for name in ("save", "run-check", "dry-run", "diagnostics"):
             self.lookup_action(name).set_enabled(not busy)
         self.actions_page.set_busy(busy)
         if message:
@@ -169,7 +207,7 @@ class RadarWindow(Adw.ApplicationWindow):
 
     def run_radar(self, mode: str) -> None:
         arguments = ("--dry-run",) if mode == "dry" else ("--force",)
-        label = "Dry-Run läuft …" if mode == "dry" else "Prüfung läuft …"
+        label = "Vorschau läuft …" if mode == "dry" else "Prüfung läuft …"
         def finished(result: CommandResult) -> None:
             self.refresh_check_status()
             if mode == "force" and result.returncode == 0 and not result.cancelled:
@@ -194,6 +232,7 @@ class RadarWindow(Adw.ApplicationWindow):
             try:
                 self.actions_page.set_diagnostics(result.output)
                 self.actions_page.set_status("Dienstdiagnose ausgewertet.")
+                self.show_toast("Dienstdiagnose ausgewertet")
             except model_radar.RadarError as exc:
                 self.actions_page.set_status(f"Dienstdiagnose kann nicht ausgewertet werden: {exc}")
 
@@ -206,18 +245,28 @@ class RadarWindow(Adw.ApplicationWindow):
     def open_settings(self, *_args) -> None:
         self.settings_window.present()
 
-    def load_report(self, *_args) -> None:
+    def load_report(self, announce: bool = True) -> None:
+        """Lädt den Bericht; beim Start fehlt er vor der ersten Prüfung regulär."""
+        path = Path(self.config["report_file"]).expanduser()
+        if not announce and not path.is_file():
+            return
         try:
-            path = Path(self.config["report_file"]).expanduser()
             report = path.read_text(encoding="utf-8")
             self.actions_page.set_report(report, logic.report_summary(report))
             self.actions_page.clear_error()
-            self.actions_page.set_status(f"Bericht geladen: {path}")
+            if announce:
+                self.show_toast("Bericht aktualisiert")
         except (model_radar.RadarError, OSError) as exc:
             self.actions_page.set_error("Bericht kann nicht geladen werden.", str(exc))
 
     def refresh_timer_status(self) -> None:
-        self.timer_controller.refresh(self.actions_page.set_timer_status)
+        self.timer_controller.refresh(self.apply_timer_status)
+
+    def apply_timer_status(self, status: TimerStatus) -> None:
+        self.actions_page.set_timer_status(status)
+        if self.banner is not None:
+            self.banner.set_title(f"Automatische Prüfungen nicht verfügbar: {status.error}" if status.error else "")
+            self.banner.set_revealed(bool(status.error))
 
     def refresh_check_status(self) -> None:
         try:
@@ -232,27 +281,92 @@ class RadarWindow(Adw.ApplicationWindow):
             return
         self._change_timer(False)
 
+    def _confirmation_dialog(self, heading: str, body: str):
+        """Adw.AlertDialog ab libadwaita 1.5, sonst das ältere Adw.MessageDialog."""
+        if hasattr(Adw, "AlertDialog"):
+            return Adw.AlertDialog(heading=heading, body=body)
+        return Adw.MessageDialog(transient_for=self, modal=True, heading=heading, body=body)
+
     def _confirm_timer_enable(self) -> None:
-        dialog = Adw.MessageDialog.new(
-            self,
-            "Automatische Prüfungen aktivieren?",
-            "Der Timer startet künftig im Hintergrund regelmäßige Netzwerkprüfungen. "
+        dialog = self._confirmation_dialog(
+            "Automatische Prüfungen einschalten?",
+            "Der Radar prüft künftig regelmäßig im Hintergrund über das Netzwerk. "
             "Modelle werden dabei weder heruntergeladen noch ausgeführt.",
         )
         dialog.add_response("cancel", "Abbrechen")
-        dialog.add_response("enable", "Timer aktivieren")
+        dialog.add_response("enable", "Einschalten")
         dialog.set_response_appearance("enable", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("cancel")
         dialog.set_close_response("cancel")
-        dialog.connect("response", lambda _dialog, response: self._change_timer(True) if response == "enable" else None)
-        dialog.present()
+
+        def respond(_dialog, response: str) -> None:
+            if response == "enable":
+                self._change_timer(True)
+            else:
+                # Der Schalter springt auf den tatsächlichen Zustand zurück.
+                self.refresh_timer_status()
+
+        dialog.connect("response", respond)
+        if isinstance(dialog, Adw.MessageDialog):
+            dialog.present()
+        else:
+            dialog.present(self)
 
     def _change_timer(self, enable: bool) -> None:
+        def finished(result: CommandResult) -> None:
+            self.refresh_timer_status()
+            if result.returncode == 0 and not result.cancelled:
+                self.show_toast(
+                    "Automatische Prüfungen eingeschaltet" if enable else "Automatische Prüfungen ausgeschaltet"
+                )
+
         self.run_command(
             self.timer_controller.change_command(enable),
-            "Timer wird geändert …",
-            lambda _result: self.refresh_timer_status(),
+            "Automatische Prüfungen werden umgeschaltet …",
+            finished,
         )
+
+    def show_shortcuts(self, *_args) -> None:
+        if hasattr(Adw, "ShortcutsDialog"):
+            dialog = Adw.ShortcutsDialog()
+            section = Adw.ShortcutsSection(title="Allgemein")
+            for title, accelerator in SHORTCUTS:
+                section.add(Adw.ShortcutsItem.new(title, accelerator))
+            dialog.add(section)
+            dialog.present(self)
+            return
+        shortcuts = "".join(
+            f'<child><object class="GtkShortcutsShortcut"><property name="title">{escape(title)}</property>'
+            f'<property name="accelerator">{escape(accelerator)}</property></object></child>'
+            for title, accelerator in SHORTCUTS
+        )
+        builder = Gtk.Builder.new_from_string(
+            '<interface><object class="GtkShortcutsWindow" id="window"><property name="modal">true</property>'
+            '<child><object class="GtkShortcutsSection"><child><object class="GtkShortcutsGroup">'
+            f'<property name="title">Allgemein</property>{shortcuts}'
+            "</object></child></object></child></object></interface>",
+            -1,
+        )
+        window = builder.get_object("window")
+        window.set_transient_for(self)
+        window.present()
+
+    def show_about(self, *_args) -> None:
+        details = dict(
+            application_name="LLM-Modellradar",
+            application_icon=os.environ.get("FLATPAK_ID", "io.github.Kattuul.Modellradar"),
+            version=model_radar.VERSION,
+            developer_name="Kattuul",
+            website="https://github.com/Kattuul/Modellradar",
+            issue_url="https://github.com/Kattuul/Modellradar/issues",
+            license_type=Gtk.License.GPL_3_0,
+            comments="Meldet neue und geänderte LLMs anhand öffentlicher Metadaten. "
+            "Es werden keine Modelle heruntergeladen oder ausgeführt.",
+        )
+        if hasattr(Adw, "AboutDialog"):
+            Adw.AboutDialog(**details).present(self)
+        else:
+            Adw.AboutWindow(transient_for=self, modal=True, **details).present()
 
 
 class RadarApplication(Adw.Application):

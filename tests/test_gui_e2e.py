@@ -103,14 +103,38 @@ class GtkWorkflowTests(unittest.TestCase):
 
     def test_ohne_systemd_bleiben_pruefung_und_bericht_bedienbar(self):
         page = self.window.actions_page
-        page.set_timer_status(TimerStatus("", "", error="Kein Benutzerdienst"))
+        self.window.apply_timer_status(TimerStatus("", "", error="Kein Benutzerdienst"))
         for busy in (True, False):
             page.set_busy(busy)
-            self.assertFalse(page.enable_button.get_sensitive())
-            self.assertFalse(page.disable_button.get_sensitive())
+            self.assertFalse(page.timer_switch.get_sensitive())
         self.assertTrue(page.run_button.get_sensitive())
-        self.assertTrue(self.window.lookup_action("reload-report").get_enabled())
-        self.assertIn("Manuelle Prüfungen", page.timer_label.get_text())
+        self.assertIn("Manuelle Prüfungen", page.timer_row.get_subtitle())
+        self.assertTrue(self.window.banner.get_revealed())
+        self.assertIn("Kein Benutzerdienst", self.window.banner.get_title())
+
+    def test_timerschalter_folgt_dem_gemeldeten_zustand(self):
+        page = self.window.actions_page
+        self.window.apply_timer_status(TimerStatus("disabled", "inactive"))
+        self.assertFalse(self.window.banner.get_revealed())
+        self.assertFalse(page.timer_switch.get_active())
+        self.assertIn("Ausgeschaltet", page.timer_row.get_subtitle())
+
+        with mock.patch.object(self.window, "_confirm_timer_enable") as confirm:
+            page.timer_switch.set_active(True)
+        confirm.assert_called_once()
+        self.assertFalse(page.timer_switch.get_state())
+
+        self.window.apply_timer_status(TimerStatus("enabled", "active", "Mo 00:38"))
+        self.assertTrue(page.timer_switch.get_active())
+        self.assertTrue(page.timer_switch.get_state())
+        self.assertIn("nächster Start: Mo 00:38", page.timer_row.get_subtitle())
+
+        with mock.patch.object(self.window, "refresh_timer_status"):
+            page.timer_switch.set_active(False)
+        self.assertEqual(
+            self.runner.command,
+            ["systemctl", "--user", "disable", "--now", "qwen35-model-radar.timer"],
+        )
 
     def test_diagnose_zeigt_schweregrad_und_fuehrt_aktionen_aus(self):
         self.window.lookup_action("diagnostics").activate(None)
@@ -150,7 +174,6 @@ class GtkWorkflowTests(unittest.TestCase):
 
     def test_leerzustand_und_fehlerdetails_sind_verstaendlich(self):
         page = self.window.actions_page
-        self.assertEqual(page.output_stack.get_visible_child_name(), "empty")
         self.window.run_command(["unbekannt"], "Test")
         self.runner.callback(CommandResult(2, "Konkretes technisches Detail"))
         self.assertTrue(page.error_details.get_visible())
@@ -159,12 +182,14 @@ class GtkWorkflowTests(unittest.TestCase):
 
     def test_timeraktivierung_braucht_bestaetigung(self):
         dialog = mock.Mock()
-        with mock.patch("model_radar_gui.Adw.MessageDialog.new", return_value=dialog):
+        with mock.patch.object(self.window, "_confirmation_dialog", return_value=dialog):
             self.window.set_timer(True)
         self.assertEqual(self.runner.command, None)
-        self.assertIn(mock.call("enable", "Timer aktivieren"), dialog.add_response.call_args_list)
+        self.assertIn(mock.call("enable", "Einschalten"), dialog.add_response.call_args_list)
         response_callback = dialog.connect.call_args.args[1]
-        response_callback(dialog, "cancel")
+        with mock.patch.object(self.window, "refresh_timer_status") as refresh:
+            response_callback(dialog, "cancel")
+        refresh.assert_called_once()
         self.assertEqual(self.runner.command, None)
         response_callback(dialog, "enable")
         self.assertEqual(
@@ -196,10 +221,50 @@ class GtkWorkflowTests(unittest.TestCase):
     def test_hauptansicht_priorisiert_aktionen_und_menu(self):
         page = self.window.actions_page
         self.assertFalse(page.cancel_button.get_visible())
-        for action in ("preferences", "dry-run", "reload-report", "diagnostics"):
+        for action in ("preferences", "dry-run", "diagnostics", "shortcuts", "about"):
             self.assertIsNotNone(self.window.lookup_action(action))
+        self.assertIsNone(self.window.lookup_action("reload-report"))
 
         self.window.lookup_action("preferences").activate(None)
+        self.assertTrue(self.window.settings_window.get_visible())
+
+    def test_bericht_wird_beim_start_still_geladen(self):
+        self.assertEqual(self.output_text(self.window), "AUTOMATISCH GELADENER BERICHT\n")
+        self.assertFalse(self.window.actions_page.error_details.get_visible())
+
+    def test_fehlender_bericht_beim_start_ist_kein_fehler(self):
+        self.window.close()
+        self.report_path.unlink()
+        with mock.patch("radar_gui_components.TimerController.refresh"):
+            self.window = RadarWindow(self.app, self.config_path)
+        self.assertEqual(self.window.actions_page.output_stack.get_visible_child_name(), "empty")
+        self.assertFalse(self.window.actions_page.error_details.get_visible())
+
+    def test_einstellungen_sind_gruppiert_und_speichern_mit_toast(self):
+        page = self.window.settings_page
+        titles = []
+        stack = [page]
+        while stack:
+            widget = stack.pop()
+            if isinstance(widget, Adw.PreferencesGroup):
+                titles.append(widget.get_title())
+            child = widget.get_last_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_prev_sibling()
+        self.assertEqual(titles, ["Modellquellen", "Automatische Prüfungen", "Netzwerk", "Erweitert"])
+
+        page.interval_spin.set_value(3)
+        with mock.patch.object(self.window, "show_toast") as toast, \
+                mock.patch("radar_gui_logic.validate_data_path", side_effect=lambda value, _label: value):
+            self.assertTrue(self.window.on_save())
+        toast.assert_called_once_with("Einstellungen gespeichert")
+        self.assertEqual(json.loads(self.config_path.read_text())["check_interval_days"], 3)
+
+    def test_ungueltige_einstellungen_bleiben_offen(self):
+        self.window.settings_page.min_spin.set_value(50)
+        self.window.settings_page.max_spin.set_value(1)
+        self.assertFalse(self.window.on_save())
         self.assertTrue(self.window.settings_window.get_visible())
 
     def test_fensterstart_migriert_konfiguration_und_zustand_mit_sicherung(self):

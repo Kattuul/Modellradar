@@ -12,7 +12,8 @@ from typing import Callable, Sequence
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk  # noqa: E402
+gi.require_version("Adw", "1")
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 import model_radar  # noqa: E402
 import radar_gui_logic as logic  # noqa: E402
@@ -135,100 +136,128 @@ class TimerController(SystemdScheduler):
         threading.Thread(target=worker, daemon=True).start()
 
 
-class SettingsPage(Gtk.ScrolledWindow):
-    """Konfigurationsformular samt Übersetzung in die geprüfte JSON-Struktur."""
+class SettingsPage(Adw.PreferencesPage):
+    """Gruppiertes Konfigurationsformular samt Übersetzung in die geprüfte JSON-Struktur."""
 
     def __init__(self, config: dict):
         super().__init__()
         self.config = config
-        grid = Gtk.Grid(
-            column_spacing=24,
-            row_spacing=16,
-            margin_top=24,
-            margin_bottom=24,
-            margin_start=24,
-            margin_end=24,
-        )
-        grid.set_hexpand(True)
 
-        self.api_entry = Gtk.Entry(text=config["api_url"], editable=False, hexpand=True)
-        self._add_row(grid, 0, "API-Adresse", self.api_entry, "Aus Sicherheitsgründen fest auf Hugging Face begrenzt.")
-
+        sources = self._group("Modellquellen", "Welche Modelle der Radar beobachtet.")
         self.publishers_view = self._text_view(logic.mapping_to_text(config["publishers"]), True, 125)
-        self._add_row(grid, 1, "Herausgeber", self.publishers_view, "Eine Zeile je Namespace: Herausgeber: Familie1, Familie2")
-
+        self._text_row(sources, "Herausgeber", "Eine Zeile je Namespace: Herausgeber: Familie1, Familie2", self.publishers_view)
         self.families_view = self._text_view(logic.mapping_to_text(config["families"]), True, 100)
-        self._add_row(grid, 2, "Modellfamilien", self.families_view, "Eine Zeile je Familie: Anzeigename: Suchbegriff1, Suchbegriff2")
-
-        range_box = Gtk.Box(spacing=12)
+        self._text_row(sources, "Modellfamilien", "Eine Zeile je Familie: Anzeigename: Suchbegriff1, Suchbegriff2", self.families_view)
         self.min_spin = Gtk.SpinButton.new_with_range(0.1, 1000, 0.1)
         self.min_spin.set_value(float(config["parameter_min_b"]))
+        self._widget_row(sources, "Kleinste Modellgröße", "Milliarden Parameter", self.min_spin)
         self.max_spin = Gtk.SpinButton.new_with_range(0.1, 1000, 0.1)
         self.max_spin.set_value(float(config["parameter_max_b"]))
-        range_box.append(Gtk.Label(label="Minimum (B)"))
-        range_box.append(self.min_spin)
-        range_box.append(Gtk.Label(label="Maximum (B)"))
-        range_box.append(self.max_spin)
-        self._add_row(grid, 3, "Parameterbereich", range_box)
-
-        self.pipeline_entry = Gtk.Entry(text=logic.list_to_text(config.get("preferred_pipeline_tags", [])), hexpand=True)
-        self._add_row(grid, 4, "Bevorzugte Pipelines", self.pipeline_entry, "Kommagetrennt")
-
+        self._widget_row(sources, "Größte Modellgröße", "Milliarden Parameter", self.max_spin)
         self.filter_modes = ("conservative", "strict_text")
-        self.filter_mode = Gtk.DropDown.new_from_strings([
-            "Konservativer Hinweis-Modus",
-            "Strikter Textmodell-Modus",
-        ])
-        self.filter_mode.set_selected(self.filter_modes.index(config.get("filter_mode", "conservative")))
-        self._add_row(
-            grid, 5, "Filtermodus", self.filter_mode,
-            "Strikt akzeptiert nur eine der bevorzugten Text-Pipelines.",
+        self.filter_mode = Adw.ComboRow(
+            title="Filtermodus",
+            subtitle="Strikt akzeptiert nur eine der bevorzugten Text-Pipelines.",
+            model=Gtk.StringList.new(["Konservativ", "Strikt: nur Textmodelle"]),
         )
+        self.filter_mode.set_selected(self.filter_modes.index(config.get("filter_mode", "conservative")))
+        sources.add(self.filter_mode)
+        self.pipeline_entry = Adw.EntryRow(
+            title="Bevorzugte Pipelines (kommagetrennt)",
+            text=logic.list_to_text(config.get("preferred_pipeline_tags", [])),
+        )
+        sources.add(self.pipeline_entry)
 
-        self.excluded_view = self._text_view(logic.list_to_text(config.get("excluded_name_terms", [])), False, 75)
-        self._add_row(grid, 6, "Ausgeschlossene Namensbestandteile", self.excluded_view, "Kommagetrennt; Groß-/Kleinschreibung wird ignoriert.")
-
+        automation = self._group("Automatische Prüfungen", "Gilt, wenn automatische Prüfungen eingeschaltet sind.")
         self.interval_spin = Gtk.SpinButton.new_with_range(1, 365, 1)
         self.interval_spin.set_value(int(config.get("check_interval_days", 7)))
-        self._add_row(grid, 7, "Prüfintervall in Tagen", self.interval_spin, "Der tägliche systemd-Timer fragt nur bei Fälligkeit die API ab.")
-
+        self._widget_row(
+            automation, "Prüfintervall", "Tage; die tägliche Hintergrundprüfung fragt nur bei Fälligkeit an.",
+            self.interval_spin,
+        )
+        self.first_run_switch = Gtk.Switch(active=bool(config.get("notify_on_first_run", False)))
+        self._widget_row(automation, "Benachrichtigung beim ersten Lauf", "", self.first_run_switch)
         self.retention_spin = Gtk.SpinButton.new_with_range(0, 36500, 1)
         self.retention_spin.set_value(int(config.get("absent_retention_days", 365)))
-        self._add_row(
-            grid, 8, "Aufbewahrung entfernter Modelle",
-            self.retention_spin, "Tage; 0 bewahrt abwesende Modelle unbegrenzt auf.",
+        self._widget_row(
+            automation, "Entfernte Modelle aufbewahren",
+            "Tage; 0 bewahrt abwesende Modelle unbegrenzt auf.", self.retention_spin,
         )
 
-        network_box = Gtk.Box(spacing=10)
+        network = self._group("Netzwerk", "Verhalten bei langsamen oder fehlerhaften Antworten.")
         self.timeout_spin = Gtk.SpinButton.new_with_range(1, 300, 1)
         self.timeout_spin.set_value(int(config.get("request_timeout_seconds", 20)))
+        self._widget_row(network, "Zeitlimit", "Sekunden je Anfrage", self.timeout_spin)
         self.retries_spin = Gtk.SpinButton.new_with_range(1, 10, 1)
         self.retries_spin.set_value(int(config.get("request_retries", 3)))
+        self._widget_row(network, "Versuche", "Anzahl je Anfrage", self.retries_spin)
         self.backoff_spin = Gtk.SpinButton.new_with_range(0.1, 60, 0.5)
         self.backoff_spin.set_value(float(config.get("retry_backoff_seconds", 2)))
-        for label, widget in (("Timeout", self.timeout_spin), ("Versuche", self.retries_spin), ("Backoff", self.backoff_spin)):
-            network_box.append(Gtk.Label(label=label))
-            network_box.append(widget)
-        self._add_row(grid, 9, "Netzwerk", network_box, "Sekunden beziehungsweise Anzahl der Versuche")
-
-        paging_box = Gtk.Box(spacing=10)
+        self._widget_row(network, "Wartezeit zwischen Versuchen", "Sekunden", self.backoff_spin)
         self.page_size_spin = Gtk.SpinButton.new_with_range(1, 1000, 1)
         self.page_size_spin.set_value(int(config.get("page_size", 100)))
+        self._widget_row(network, "Seitengröße", "Treffer je API-Seite", self.page_size_spin)
         self.pages_spin = Gtk.SpinButton.new_with_range(1, 100, 1)
         self.pages_spin.set_value(int(config.get("max_pages_per_query", 10)))
-        paging_box.append(Gtk.Label(label="Seitengröße"))
-        paging_box.append(self.page_size_spin)
-        paging_box.append(Gtk.Label(label="Max. Seiten"))
-        paging_box.append(self.pages_spin)
-        self._add_row(grid, 10, "API-Pagination", paging_box)
+        self._widget_row(network, "Maximale Seiten", "Je Suchanfrage", self.pages_spin)
 
-        self.first_run_switch = Gtk.Switch(active=bool(config.get("notify_on_first_run", False)), halign=Gtk.Align.START)
-        self._add_row(grid, 11, "Benachrichtigung beim Erstlauf", self.first_run_switch)
-        self.state_entry = Gtk.Entry(text=str(config["state_file"]), hexpand=True)
-        self._add_row(grid, 12, "Zustandsdatei", self.state_entry)
-        self.report_entry = Gtk.Entry(text=str(config["report_file"]), hexpand=True)
-        self._add_row(grid, 13, "Berichtsdatei", self.report_entry)
-        self.set_child(grid)
+        advanced = self._group("Erweitert", "Nur bei Bedarf ändern.")
+        self.excluded_view = self._text_view(logic.list_to_text(config.get("excluded_name_terms", [])), False, 75)
+        self._text_row(
+            advanced, "Ausgeschlossene Namensbestandteile",
+            "Kommagetrennt; Groß-/Kleinschreibung wird ignoriert.", self.excluded_view,
+        )
+        api_row = Adw.ActionRow(title="API-Adresse", subtitle=config["api_url"])
+        api_row.set_subtitle_selectable(True)
+        api_row.set_tooltip_text("Aus Sicherheitsgründen fest auf Hugging Face begrenzt.")
+        advanced.add(api_row)
+        self.state_entry = Adw.EntryRow(title="Zustandsdatei", text=str(config["state_file"]))
+        advanced.add(self.state_entry)
+        self.report_entry = Adw.EntryRow(title="Berichtsdatei", text=str(config["report_file"]))
+        advanced.add(self.report_entry)
+
+    def _group(self, title: str, description: str) -> Adw.PreferencesGroup:
+        group = Adw.PreferencesGroup(title=title, description=description)
+        self.add(group)
+        return group
+
+    @staticmethod
+    def _widget_row(group: Adw.PreferencesGroup, title: str, subtitle: str, widget: Gtk.Widget) -> Adw.ActionRow:
+        row = Adw.ActionRow(title=title, subtitle=subtitle)
+        widget.set_valign(Gtk.Align.CENTER)
+        widget.update_property([Gtk.AccessibleProperty.LABEL], [title])
+        row.add_suffix(widget)
+        row.set_activatable_widget(widget)
+        group.add(row)
+        return row
+
+    @staticmethod
+    def _text_row(group: Adw.PreferencesGroup, title: str, hint: str, view: Gtk.TextView) -> None:
+        """Mehrzeilige Felder brauchen eine eigene Zeile, damit sie in der Liste bleiben."""
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=6,
+            margin_top=12, margin_bottom=12, margin_start=12, margin_end=12,
+        )
+        heading = Gtk.Label(label=title, xalign=0)
+        box.append(heading)
+        detail = Gtk.Label(label=hint, xalign=0, wrap=True)
+        detail.add_css_class("dim-label")
+        detail.add_css_class("caption")
+        box.append(detail)
+        # Umbrechende TextViews melden sonst eine überhöhte natürliche Höhe.
+        scroll = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            propagate_natural_height=True,
+            min_content_height=view.get_size_request()[1],
+            max_content_height=240,
+            child=view,
+        )
+        view.set_size_request(-1, -1)
+        for side in ("top", "bottom", "left", "right"):
+            getattr(view, f"set_{side}_margin")(8)
+        box.append(Gtk.Frame(child=scroll))
+        view.update_property([Gtk.AccessibleProperty.LABEL], [title])
+        group.add(Gtk.ListBoxRow(child=box, activatable=False))
 
     @staticmethod
     def _text_view(text: str = "", monospace: bool = False, min_height: int = 90) -> Gtk.TextView:
@@ -238,19 +267,6 @@ class SettingsPage(Gtk.ScrolledWindow):
         return view
 
     @staticmethod
-    def _add_row(grid: Gtk.Grid, row: int, label: str, widget: Gtk.Widget, hint: str = "") -> None:
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        title = Gtk.Label(label=label, xalign=0)
-        title.add_css_class("heading")
-        box.append(title)
-        if hint:
-            detail = Gtk.Label(label=hint, xalign=0, wrap=True)
-            detail.add_css_class("dim-label")
-            box.append(detail)
-        grid.attach(box, 0, row, 1, 1)
-        grid.attach(widget, 1, row, 1, 1)
-
-    @staticmethod
     def _buffer_text(view: Gtk.TextView) -> str:
         buffer = view.get_buffer()
         return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
@@ -258,7 +274,7 @@ class SettingsPage(Gtk.ScrolledWindow):
     def collect_config(self) -> dict:
         config = dict(self.config)
         config.update({
-            "api_url": self.api_entry.get_text(),
+            "api_url": self.config["api_url"],
             "publishers": logic.text_to_mapping(self._buffer_text(self.publishers_view), "Herausgeber"),
             "families": logic.text_to_mapping(self._buffer_text(self.families_view), "Modellfamilien"),
             "parameter_min_b": self.min_spin.get_value(),
@@ -285,11 +301,12 @@ class SettingsPage(Gtk.ScrolledWindow):
 
 
 class ActionsPage(Gtk.Box):
-    """Bedienseite für Prüfungen, Berichtsausgabe und Timersteuerung."""
+    """Bedienseite für Prüfungen, Berichtsausgabe und automatische Prüfungen."""
 
     def __init__(
         self, on_force_run, on_cancel, on_recommendations,
         on_enable_timer, on_disable_timer, on_diagnostics, on_open_settings,
+        notify: Callable[[str], None] | None = None,
     ):
         super().__init__(
             orientation=Gtk.Orientation.VERTICAL,
@@ -299,6 +316,7 @@ class ActionsPage(Gtk.Box):
             margin_start=24,
             margin_end=24,
         )
+        self.notify = notify or self.set_status
         heading = Gtk.Label(label="Modellprüfung", xalign=0)
         heading.add_css_class("title-2")
         self.append(heading)
@@ -326,23 +344,24 @@ class ActionsPage(Gtk.Box):
             button_box.append(button)
         self.append(button_box)
 
-        automation_heading = Gtk.Label(label="Automatische Prüfungen", xalign=0)
-        automation_heading.add_css_class("heading")
-        self.append(automation_heading)
-        timer_box = Gtk.FlowBox(
-            selection_mode=Gtk.SelectionMode.NONE, column_spacing=10, row_spacing=10,
+        self._on_enable_timer = on_enable_timer
+        self._on_disable_timer = on_disable_timer
+        self._syncing_timer = False
+        self.timer_switch = Gtk.Switch(valign=Gtk.Align.CENTER, sensitive=False)
+        self.timer_switch.set_tooltip_text(
+            "Einschalten fragt nach, weil regelmäßige Netzwerkprüfungen im Hintergrund starten."
         )
-        self.timer_label = Gtk.Label(label="Timerstatus wird geladen …", xalign=0, hexpand=True)
-        self.enable_button = Gtk.Button(label="Timer aktivieren")
-        self.enable_button.set_tooltip_text("Fragt vor der Aktivierung nach, weil automatische Netzwerkprüfungen starten.")
-        self.enable_button.connect("clicked", on_enable_timer)
-        self.disable_button = Gtk.Button(label="Timer deaktivieren")
-        self.disable_button.set_tooltip_text("Beendet nur automatische Prüfungen; manuelle Prüfungen bleiben möglich.")
-        self.disable_button.connect("clicked", on_disable_timer)
-        timer_box.append(self.timer_label)
-        timer_box.append(self.enable_button)
-        timer_box.append(self.disable_button)
-        self.append(timer_box)
+        self.timer_switch.update_property([Gtk.AccessibleProperty.LABEL], ["Automatische Prüfungen"])
+        self.timer_switch.connect("state-set", self._on_timer_switch)
+        self.timer_row = Adw.ActionRow(
+            title="Automatische Prüfungen", subtitle="Status wird geladen …",
+        )
+        self.timer_row.add_suffix(self.timer_switch)
+        self.timer_row.set_activatable_widget(self.timer_switch)
+        timer_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        timer_list.add_css_class("boxed-list")
+        timer_list.append(self.timer_row)
+        self.append(timer_list)
 
         result_heading = Gtk.Label(label="Letztes Ergebnis", xalign=0)
         result_heading.add_css_class("heading")
@@ -363,7 +382,7 @@ class ActionsPage(Gtk.Box):
         self.diagnostic_panel.append(self.diagnostic_findings)
         diagnostic_actions = Gtk.Box(spacing=8)
         self.diagnostic_action_buttons = {
-            "enable_timer": Gtk.Button(label="Timer aktivieren"),
+            "enable_timer": Gtk.Button(label="Automatische Prüfungen einschalten"),
             "open_settings": Gtk.Button(label="Konfiguration prüfen"),
             "run_check": Gtk.Button(label="Prüfung erneut starten"),
             "retry_diagnostics": Gtk.Button(label="Diagnose wiederholen"),
@@ -437,8 +456,7 @@ class ActionsPage(Gtk.Box):
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
         for button in (
-            self.run_button, self.recommendations_button, self.enable_button,
-            self.disable_button,
+            self.run_button, self.recommendations_button,
             *self.diagnostic_action_buttons.values(),
         ):
             button.set_sensitive(not busy)
@@ -487,20 +505,41 @@ class ActionsPage(Gtk.Box):
 
     def _copy_text(self, text: str, label: str) -> None:
         if not text:
-            self.set_status(f"Kein {label.lower()} zum Kopieren vorhanden.")
+            self.notify(f"Kein {label.lower()} zum Kopieren vorhanden.")
             return
         self.get_clipboard().set(text)
-        self.set_status(f"{label} in die Zwischenablage kopiert.")
+        self.notify(f"{label} in die Zwischenablage kopiert.")
+
+    def _on_timer_switch(self, switch: Gtk.Switch, state: bool) -> bool:
+        if self._syncing_timer:
+            return False
+        (self._on_enable_timer if state else self._on_disable_timer)(switch)
+        # Der Schalter folgt erst dem tatsächlich gemeldeten Timerstatus.
+        return True
 
     def set_timer_status(self, status: TimerStatus) -> None:
-        self.timer_label.set_text(status.display_text())
+        enabled = not status.error and status.enabled == "enabled"
+        if status.error:
+            subtitle = "Nicht verfügbar · Manuelle Prüfungen sind weiterhin möglich."
+        elif enabled:
+            subtitle = "Eingeschaltet" + (f" · nächster Start: {status.next_run}" if status.next_run else "")
+        else:
+            subtitle = "Ausgeschaltet · Prüfungen nur manuell"
+        self.timer_row.set_subtitle(subtitle)
+        self.timer_row.set_tooltip_text(status.display_text())
+        self._syncing_timer = True
+        try:
+            self.timer_switch.set_active(enabled)
+            self.timer_switch.set_state(enabled)
+        finally:
+            self._syncing_timer = False
         self._timer_available = not bool(status.error)
         self._update_timer_buttons()
 
     def _update_timer_buttons(self) -> None:
         available = getattr(self, "_timer_available", False) and not getattr(self, "_busy", False)
-        for button in (self.enable_button, self.disable_button, self.diagnostic_action_buttons["enable_timer"]):
-            button.set_sensitive(available)
+        for widget in (self.timer_switch, self.diagnostic_action_buttons["enable_timer"]):
+            widget.set_sensitive(available)
 
     def set_check_status(self, text: str) -> None:
         self.check_label.set_text(text)

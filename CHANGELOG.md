@@ -3,13 +3,24 @@
 
 ## Unveröffentlicht
 
+- UI-Redesign: Einstellungen in vier Gruppen (Modellquellen, Automatische
+  Prüfungen, Netzwerk, Erweitert) mit libadwaita-Zeilen; `Strg+S` speichert
+  jetzt auch direkt im Einstellungsfenster. Automatische Prüfungen werden über
+  einen Schalter statt zweier Timer-Schaltflächen gesteuert.
+- Kurze Erfolgsmeldungen erscheinen als Toast, ein fehlender systemd-Dienst als
+  Banner mit Sprung zur Diagnose. Bestätigungen nutzen ab libadwaita 1.5
+  `Adw.AlertDialog`.
+- Hauptmenü mit Untermenü „Weitere Prüfoptionen“, Tastenkürzel-Übersicht
+  (`Strg+?`) und „Über Modellradar“. „Gespeicherten Bericht neu laden“ entfällt;
+  der Bericht wird beim Start automatisch geladen.
+
 - Hardwarebewusste, unprivilegierte GPU-Erkennung in der Systemdiagnose:
   sichtbare DRM-Grafikadapter, Treiber und optionaler dedizierter VRAM; klare
   Hinweise bei Sandbox- und Berechtigungseinschränkungen.
 
 - GUI-Polishing: verständliche Vorschau-Bezeichnung, Hilfetexte, anpassungsfähige
   Schaltflächen, anfängerfreundlicher Leerzustand, Tastenkürzel `Strg+S` und
-  `Strg+R` sowie Wiederherstellung von Fenstergröße und zuletzt geöffneter Ansicht.
+  `Strg+R` sowie Wiederherstellung der Fenstergröße.
 - Bericht zeigt einen Kurzüberblick über Zeit, Treffer und alle vier
   Lebenszyklusereignisse; Bericht und Dienstdiagnose lassen sich in die
   Zwischenablage kopieren. Fehlerdetails sind einklappbar.

@@ -126,9 +126,13 @@ Laufzeit mit.
 
 Die GUI bearbeitet sämtliche Konfigurationsfelder, zeigt den gespeicherten
 Bericht an und priorisiert in der Hauptansicht die sofortige Prüfung, die
-Hardware-Eignung sowie das Aktivieren und Deaktivieren des Timers. Einstellungen,
-**Vorschau ohne Änderungen**, erneutes Laden des Berichts und Dienstdiagnose
-liegen im Hauptmenü.
+Hardware-Eignung sowie den Schalter **Automatische Prüfungen**, der den Timer
+ein- und ausschaltet. Das Hauptmenü enthält Einstellungen, das Untermenü
+„Weitere Prüfoptionen“ mit **Vorschau ohne Änderungen**, die Dienstdiagnose,
+eine Übersicht der Tastenkürzel und „Über Modellradar“. Der gespeicherte Bericht
+wird beim Start und nach jeder erfolgreichen Prüfung automatisch geladen.
+Die Einstellungen sind in die Gruppen Modellquellen, Automatische Prüfungen,
+Netzwerk und Erweitert gegliedert; Änderungen gelten erst nach **Speichern**.
 Netzwerkprüfungen laufen in einem
 Hintergrundprozess, während eine pulsierende Fortschrittsanzeige sichtbar ist;
 der Lauf kann direkt abgebrochen werden. Nach einer erfolgreichen regulären
@@ -144,11 +148,14 @@ Passende Aktionen erlauben direkt das Aktivieren des Timers, den Wechsel zur
 Konfiguration, eine erneute Prüfung oder das Wiederholen der Diagnose. Befehle
 werden immer als Argumentliste ohne Shell gestartet.
 
-Beim ersten Aufruf erklärt ein Leerzustand den nächsten sicheren Schritt. Die
-Timeraktivierung verlangt eine Bestätigung, weil sie regelmäßige
-Netzwerkprüfungen einschaltet. Fehlermeldungen bleiben kurz; technische Details
-sind bei Bedarf aufklappbar. `Strg+,` öffnet die Einstellungen, `Strg+S`
-speichert sie und `Strg+R` startet eine Prüfung. Die Fenstergröße wird lokal
+Beim ersten Aufruf erklärt ein Leerzustand den nächsten sicheren Schritt. Das
+Einschalten automatischer Prüfungen verlangt eine Bestätigung, weil es regelmäßige
+Netzwerkprüfungen startet. Kurze Erfolgsmeldungen erscheinen als
+vorübergehende Hinweise; ist der systemd-Benutzerdienst nicht erreichbar, weist
+ein dauerhaftes Banner mit Sprung zur Diagnose darauf hin. Fehlermeldungen
+bleiben kurz; technische Details sind bei Bedarf aufklappbar. `Strg+,` öffnet
+die Einstellungen, `Strg+S` speichert sie, `Strg+R` startet eine Prüfung und
+`Strg+?` zeigt alle Tastenkürzel. Die Fenstergröße wird lokal
 als reine Darstellungspräferenz gespeichert.
 
 Neben dem nächsten täglichen Timerstart zeigt die Oberfläche den letzten
