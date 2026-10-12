@@ -26,6 +26,10 @@
   Fehlerzustände sowie Kopier- und Neu-berechnen-Aktionen; ein Abbruch stellt
   das vorige Ergebnis wieder her. Die Vorschau erscheint als ungespeicherter
   Bericht, Fehlermeldungen bieten direkt „Dienstdiagnose öffnen“.
+- Debian 12 (GTK 4.8, libadwaita 1.2) startet die GUI wieder: Die markierbare
+  API-Adresse nutzt `set_subtitle_selectable` nur, wo vorhanden. Die CI prüft
+  zusätzlich `debian:12-slim`; `container_check.sh` führt denselben
+  Release-Check lokal mit Podman oder Docker aus.
 
 - Hardwarebewusste, unprivilegierte GPU-Erkennung in der Systemdiagnose:
   sichtbare DRM-Grafikadapter, Treiber und optionaler dedizierter VRAM; klare

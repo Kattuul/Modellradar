@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ["debian:stable-slim", "fedora:latest"]
+        image: ["debian:stable-slim", "debian:12-slim", "fedora:latest"]
         mode: [headless, gui]
     container: ${{ matrix.image }}
     steps:

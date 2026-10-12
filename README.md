@@ -42,7 +42,9 @@ Die lokal durchgeführten Prüfungen sind im [Prüfprotokoll](packaging/flatpak/
 - `release_check.py`: automatisierter Syntax-, Test-, GTK- und Installationscheck
 - `CHANGELOG.md`: versioniertes Änderungsprotokoll
 - `.github/workflows/platform-check.yml`: getrennte GUI-/Headless-Prüfungen
-  in Debian- und Fedora-Containern bei Push und Pull Request
+  in Debian-13-, Debian-12- und Fedora-Containern bei Push und Pull Request
+- `container_check.sh`: dieselbe Prüfung lokal mit Podman oder Docker,
+  standardmäßig in Debian 12 (`./container_check.sh [image] [--headless]`)
 - `tests/fixtures/`: reproduzierbare, rein lokale API-Antworten
 - `state.json` (später unter `~/.local/share/...`): bekannte IDs, SHA,
   Kandidaten-Snapshots, Anwesenheitsstatus sowie `first_seen`, `last_seen`,

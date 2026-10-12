@@ -117,13 +117,15 @@ class GtkWorkflowTests(unittest.TestCase):
             self.assertFalse(page.timer_switch.get_sensitive())
         self.assertTrue(page.run_button.get_sensitive())
         self.assertIn("Manuelle Prüfungen", page.timer_row.get_subtitle())
-        self.assertTrue(self.window.banner.get_revealed())
-        self.assertIn("Kein Benutzerdienst", self.window.banner.get_title())
+        if self.window.banner is not None:  # Adw.Banner ab libadwaita 1.3
+            self.assertTrue(self.window.banner.get_revealed())
+            self.assertIn("Kein Benutzerdienst", self.window.banner.get_title())
 
     def test_timerschalter_folgt_dem_gemeldeten_zustand(self):
         page = self.window.dashboard
         self.window.apply_timer_status(TimerStatus("disabled", "inactive"))
-        self.assertFalse(self.window.banner.get_revealed())
+        if self.window.banner is not None:
+            self.assertFalse(self.window.banner.get_revealed())
         self.assertFalse(page.timer_switch.get_active())
         self.assertIn("Ausgeschaltet", page.timer_row.get_subtitle())
 
@@ -439,7 +441,10 @@ class GtkWorkflowTests(unittest.TestCase):
         row = page._event_rows[0]
         # Markup aus Fremddaten wird angezeigt, nicht interpretiert; der Status steht als Text da.
         self.assertEqual(row.get_title(), "org/&lt;b&gt;Modell&lt;/b&gt;")
-        self.assertTrue(row.get_subtitle().startswith("Entfernt · Q&amp;A"))
+        # get_subtitle() liefert je nach libadwaita-Version Markup oder Text; geprüft wird die Anzeige.
+        shown = [w.get_text() for w in self.descendants(row) if isinstance(w, Gtk.Label)]
+        self.assertIn("org/<b>Modell</b>", shown)
+        self.assertTrue(any(text.startswith("Entfernt · Q&A") for text in shown), shown)
         self.assertFalse(page.raw_details.get_expanded())
         self.assertEqual(page.text(), report)
 
@@ -546,7 +551,9 @@ class GtkWorkflowTests(unittest.TestCase):
     def test_bedienelemente_haben_namen_fuer_screenreader(self):
         controls = (Gtk.Button, Gtk.MenuButton, Gtk.Switch, Gtk.SpinButton, Gtk.TextView, Gtk.ProgressBar, Gtk.Spinner)
         # Interne Teile von GTK/libadwaita benennen diese Bibliotheken selbst.
-        internal = (Gtk.SpinButton, Gtk.MenuButton, Gtk.WindowControls, Gtk.Expander, Adw.Banner, Adw.EntryRow)
+        internal = (Gtk.SpinButton, Gtk.MenuButton, Gtk.WindowControls, Gtk.Expander, Adw.EntryRow)
+        if hasattr(Adw, "Banner"):
+            internal += (Adw.Banner,)
         roots = (self.window.navigation.widget, self.window.report_page, self.window.hardware_page,
                  self.window.diagnostics_page, self.window.settings_page)
         unnamed = []

@@ -209,7 +209,8 @@ class SettingsPage(Adw.PreferencesPage):
             "Kommagetrennt; Groß-/Kleinschreibung wird ignoriert.", self.excluded_view,
         )
         api_row = Adw.ActionRow(title="API-Adresse", subtitle=config["api_url"])
-        api_row.set_subtitle_selectable(True)
+        if hasattr(api_row, "set_subtitle_selectable"):  # ab libadwaita 1.3
+            api_row.set_subtitle_selectable(True)
         api_row.set_tooltip_text("Aus Sicherheitsgründen fest auf Hugging Face begrenzt.")
         describe(api_row, "API-Adresse", "Aus Sicherheitsgründen fest auf Hugging Face begrenzt.")
         advanced.add(api_row)
