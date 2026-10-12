@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Native GTK4/libadwaita-Oberfläche für den LLM-Modellradar."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -170,7 +172,7 @@ class RadarWindow(Adw.ApplicationWindow):
 
 class RadarApplication(Adw.Application):
     def __init__(self, config_path: Path):
-        super().__init__(application_id="de.local.Qwen35ModelRadar", flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        super().__init__(application_id=os.environ.get("FLATPAK_ID", "de.local.Qwen35ModelRadar"), flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.config_path = config_path
         self.connect("activate", self.on_activate)
 

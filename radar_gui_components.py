@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Wiederverwendbare GTK-Seiten und Hintergrunddienste der Radar-GUI."""
 
 from __future__ import annotations

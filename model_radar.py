@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Lokaler Modellradar für explizit erlaubte Hugging-Face-Herausgeber.
 
 Benötigt ausschließlich die Python-Standardbibliothek. Das Programm lädt keine

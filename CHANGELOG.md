@@ -1,6 +1,13 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Änderungsprotokoll
 
 ## Unveröffentlicht
+
+- Eigene Projektdateien unter GPL-3.0-or-later gestellt; Lizenztext, SPDX-Kennzeichnungen
+  und Drittanbieterhinweise ergänzt. Native Installation und neue Flatpak-Pakete enthalten die Hinweise.
+
+- Flatpak-GUI und Offline-Installationsarchiv mit GNOME-/Mesa-Laufzeit; Wayland und X11-Rückfalloption.
+- Isolierte, beschreibbare Flatpak-Konfiguration und Datenpfade; kein pauschaler Host-Zugriff.
 
 - Fedora-GUI-Abhängigkeiten um `gobject-introspection` ergänzt, damit auch in minimalen Images die Cairo-Typinformationen verfügbar sind.
 - CI prüft GTK-/libadwaita-Imports vor dem Testlauf; Installationshinweise entsprechend korrigiert.

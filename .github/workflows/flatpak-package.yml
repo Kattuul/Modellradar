@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Flatpak GUI package
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  offline-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install packaging and display-test tools
+        run: sudo apt-get update && sudo apt-get install -y flatpak ostree cage xvfb dbus-x11
+      - name: Install pinned runtime branches
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --assumeyes --noninteractive --no-related flathub org.gnome.Platform//49 org.freedesktop.Platform.GL.default//25.08
+      - name: Build GUI and offline package
+        run: python3 build_flatpak.py
+      - name: Verify offline installation, Wayland and X11
+        run: python3 verify_flatpak.py dist/*-offline.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modellradar-flatpak-x86_64
+          path: dist/*

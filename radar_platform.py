@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Desktop- und systemd-Adapter ohne GTK-Abhängigkeit."""
 
 from __future__ import annotations
@@ -61,6 +62,8 @@ class SystemdScheduler:
 
     @classmethod
     def query_status(cls, executor=None) -> TimerStatus:
+        if os.environ.get("FLATPAK_ID"):
+            return TimerStatus("", "", error="Host-systemd ist in der Flatpak-Sandbox nicht zugänglich")
         run = executor or subprocess.run
 
         def capture(arguments: list[str], *, status: bool = False) -> str:

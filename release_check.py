@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Reproduzierbarer Release-, GTK- und Installationscheck."""
 
 from __future__ import annotations
@@ -74,6 +75,9 @@ def check_installation(headless: bool = False) -> None:
                 continue
             if digest(ROOT / name) != digest(app / name):
                 raise RuntimeError(f"Installierte Datei weicht von der Quelle ab: {name}")
+        for name in ("LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"):
+            if digest(ROOT / name) != digest(app / name):
+                raise RuntimeError(f"Installierter Lizenzhinweis weicht von der Quelle ab: {name}")
         for name, relative_target in INSTALLED_FILES.items():
             if digest(ROOT / name) != digest(target / relative_target):
                 raise RuntimeError(f"Installiertes Artefakt weicht von der Quelle ab: {name}")

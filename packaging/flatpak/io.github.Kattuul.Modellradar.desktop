@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[Desktop Entry]
+Type=Application
+Name=Modellradar
+Comment=Passende Sprachmodelle entdecken und Änderungen verfolgen
+Exec=modellradar
+Icon=io.github.Kattuul.Modellradar
+Terminal=false
+Categories=Utility;Network;
+StartupNotify=true

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """GUI-unabhängige Konfigurationslogik für den LLM-Modellradar."""
 
 from __future__ import annotations
@@ -60,14 +61,26 @@ def default_gui_config_path() -> Path:
     installed = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "qwen35" / "model-radar.json"
     if installed.is_file():
         return installed
+    if os.environ.get("FLATPAK_ID"):
+        config = model_radar.load_config(Path(__file__).resolve().with_name("config.json"))
+        data = data_directory()
+        config.update(state_file=str(data / "state.json"), report_file=str(data / "latest-report.txt"))
+        save_config(installed, config)
+        return installed
     return Path(__file__).resolve().with_name("config.json")
+
+
+def data_directory() -> Path:
+    if os.environ.get("FLATPAK_ID"):
+        return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "qwen35-model-radar"
+    return Path.home() / ".local" / "share" / "qwen35-model-radar"
 
 
 def validate_data_path(value: str, label: str) -> str:
     if not value.strip():
         raise model_radar.RadarError(f"{label} darf nicht leer sein.")
     path = Path(value).expanduser().resolve(strict=False)
-    allowed = (Path.home() / ".local" / "share" / "qwen35-model-radar").resolve(strict=False)
+    allowed = data_directory().resolve(strict=False)
     if path != allowed and allowed not in path.parents:
         raise model_radar.RadarError(f"{label} muss innerhalb von {allowed} liegen.")
     return value.strip()

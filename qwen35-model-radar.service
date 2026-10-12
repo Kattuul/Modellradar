@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [Unit]
 Description=LLM-Modellradar für mögliche lokale Modellnachfolger
 Documentation=https://huggingface.co/docs/huggingface_hub/package_reference/hf_api

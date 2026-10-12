@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Strukturierte, rein lokale systemd-Diagnose für den Modellradar."""
 
 from __future__ import annotations

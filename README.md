@@ -1,4 +1,9 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Lokaler LLM-Modellradar für Linux
+
+Lizenz für die eigenen Projektdateien: **GPL-3.0-or-later**.
+Vollständiger Text: [LICENSE](LICENSE); Geltungsbereich, Beiträge und Weitergabe:
+[LICENSING.md](LICENSING.md); externe Komponenten: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Der Modellradar fragt einmal pro Woche ausschließlich die in `config.json`
 freigegebenen Hugging-Face-Namespaces ab. Treffer werden stets nur als
@@ -12,6 +17,14 @@ außerhalb von GNOME. Desktop-Hinweise nutzen optional `notify-send` und eine
 grafische D-Bus-Sitzung. Öffentliche Modellmetadaten
 werden ohne Hugging-Face-Token abgefragt; das Skript liest auch keinen lokal
 gespeicherten Token.
+
+## GUI-Paket für Debian, Fedora und unveränderliche Images
+
+`python3 build_flatpak.py` erzeugt ein Flatpak sowie ein Offline-Archiv inklusive
+Python/PyGObject, GTK4, libadwaita und Mesa-Laufzeit. Wayland wird direkt unterstützt,
+X11 nur als Rückfalloption. Details, Voraussetzungen und Sandbox-Einschränkungen:
+[Paketinstallation](packaging/flatpak/README.md).
+Die lokal durchgeführten Prüfungen sind im [Prüfprotokoll](packaging/flatpak/VALIDATION.md) dokumentiert.
 
 ## Dateien und Datenfluss
 
