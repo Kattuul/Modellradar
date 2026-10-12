@@ -53,30 +53,31 @@ class RadarWindow(Adw.ApplicationWindow):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header = Adw.HeaderBar()
         header.set_title_widget(Gtk.Label(label="LLM-Modellradar"))
-        self.save_button = Gtk.Button(label="Speichern")
-        self.save_button.add_css_class("suggested-action")
-        self.save_button.connect("clicked", self.on_save)
-        header.pack_end(self.save_button)
+        self.main_menu = Gio.Menu()
+        self.main_menu.append("Einstellungen", "win.preferences")
+        self.main_menu.append("Vorschau ohne Änderungen", "win.dry-run")
+        self.main_menu.append("Gespeicherten Bericht neu laden", "win.reload-report")
+        self.main_menu.append("Dienstdiagnose", "win.diagnostics")
+        menu_button = Gtk.MenuButton(
+            icon_name="open-menu-symbolic",
+            menu_model=self.main_menu,
+            tooltip_text="Hauptmenü",
+        )
+        header.pack_end(menu_button)
         outer.append(header)
 
         self.settings_page = SettingsPage(self.config)
+        self.settings_window = self._build_settings_window()
         self.actions_page = ActionsPage(
-            lambda *_: self.run_radar("dry"),
             lambda *_: self.run_radar("force"),
             self.cancel_run,
-            self.load_report,
             self.show_recommendations,
             lambda *_: self.set_timer(True),
             lambda *_: self.set_timer(False),
             self.show_diagnostics,
             self.open_settings,
         )
-        self.notebook = Gtk.Notebook(hexpand=True, vexpand=True)
-        self.notebook.append_page(self.settings_page, Gtk.Label(label="Einstellungen"))
-        self.notebook.append_page(self.actions_page, Gtk.Label(label="Prüfung und Bericht"))
-        self.notebook.set_current_page(self.preferences.get("page", 0))
-        self.notebook.connect("switch-page", self._remember_page)
-        outer.append(self.notebook)
+        outer.append(self.actions_page)
         self.set_content(outer)
         self._install_shortcuts()
         self.connect("close-request", self._save_preferences)
@@ -85,22 +86,41 @@ class RadarWindow(Adw.ApplicationWindow):
 
     def _install_shortcuts(self) -> None:
         for name, callback, shortcuts in (
+            ("preferences", self.open_settings, ("<Ctrl>comma",)),
             ("save", lambda *_: self.on_save(), ("<Ctrl>s",)),
             ("run-check", lambda *_: self.run_radar("force"), ("<Ctrl>r",)),
+            ("dry-run", lambda *_: self.run_radar("dry"), ()),
+            ("reload-report", self.load_report, ()),
+            ("diagnostics", self.show_diagnostics, ()),
         ):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
             self.add_action(action)
-            self.get_application().set_accels_for_action(f"win.{name}", list(shortcuts))
+            if shortcuts:
+                self.get_application().set_accels_for_action(f"win.{name}", list(shortcuts))
 
-    def _remember_page(self, _notebook, _page, page_num: int) -> None:
-        self.preferences["page"] = page_num
+    def _build_settings_window(self) -> Adw.Window:
+        window = Adw.Window(title="Einstellungen", transient_for=self, modal=True)
+        window.set_default_size(780, 680)
+        window.set_hide_on_close(True)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header = Adw.HeaderBar()
+        header.set_title_widget(Gtk.Label(label="Einstellungen"))
+        save_button = Gtk.Button(label="Speichern")
+        save_button.add_css_class("suggested-action")
+        save_button.connect("clicked", self.on_save)
+        header.pack_end(save_button)
+        content.append(header)
+        content.append(self.settings_page)
+        window.set_content(content)
+        self.settings_save_button = save_button
+        return window
 
     def _save_preferences(self, *_args) -> bool:
         width, height = self.get_width(), self.get_height()
         if width < 700 or height < 560:
             width, height = self.get_default_size()
-        self.preferences.update(page=self.notebook.get_current_page(), width=width, height=height)
+        self.preferences.update(width=width, height=height)
         try:
             logic.save_gui_preferences(self.preferences)
         except OSError:
@@ -115,15 +135,18 @@ class RadarWindow(Adw.ApplicationWindow):
             self.settings_page.accept_config(config)
             self.actions_page.set_status(f"Gespeichert: {self.config_path}")
             self.refresh_check_status()
+            self.settings_window.set_visible(False)
             return True
         except (model_radar.RadarError, OSError) as exc:
             self.actions_page.set_status(f"Fehler: {exc}")
-            self.notebook.set_current_page(0)
+            self.settings_window.present()
             return False
 
     def set_busy(self, busy: bool, message: str = "") -> None:
         self._busy = busy
-        self.save_button.set_sensitive(not busy)
+        self.settings_save_button.set_sensitive(not busy)
+        for name in ("save", "run-check", "dry-run", "reload-report", "diagnostics"):
+            self.lookup_action(name).set_enabled(not busy)
         self.actions_page.set_busy(busy)
         if message:
             self.actions_page.set_status(message)
@@ -145,8 +168,6 @@ class RadarWindow(Adw.ApplicationWindow):
         self.command_runner.run(command, finish)
 
     def run_radar(self, mode: str) -> None:
-        if not self.on_save():
-            return
         arguments = ("--dry-run",) if mode == "dry" else ("--force",)
         label = "Dry-Run läuft …" if mode == "dry" else "Prüfung läuft …"
         def finished(result: CommandResult) -> None:
@@ -161,14 +182,12 @@ class RadarWindow(Adw.ApplicationWindow):
         self.actions_page.set_status("Abbruch angefordert …")
 
     def show_recommendations(self, _button=None) -> None:
-        if not self.on_save():
-            return
         self.run_command(
             logic.recommendations_command(self.config_path),
             "Hardware-Eignung wird anhand öffentlicher Metadaten berechnet …",
         )
 
-    def show_diagnostics(self, _button=None) -> None:
+    def show_diagnostics(self, *_args) -> None:
         def finished(result: CommandResult) -> None:
             if result.returncode != 0 or result.cancelled:
                 return
@@ -184,12 +203,12 @@ class RadarWindow(Adw.ApplicationWindow):
             finished,
         )
 
-    def open_settings(self, _button=None) -> None:
-        self.notebook.set_current_page(0)
+    def open_settings(self, *_args) -> None:
+        self.settings_window.present()
 
-    def load_report(self, _button=None) -> None:
+    def load_report(self, *_args) -> None:
         try:
-            path = Path(self.settings_page.collect_config()["report_file"]).expanduser()
+            path = Path(self.config["report_file"]).expanduser()
             report = path.read_text(encoding="utf-8")
             self.actions_page.set_report(report, logic.report_summary(report))
             self.actions_page.clear_error()

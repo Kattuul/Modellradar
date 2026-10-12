@@ -125,18 +125,21 @@ Alternativ bringt das unter „GUI-Paket“ beschriebene Flatpak die grafische
 Laufzeit mit.
 
 Die GUI bearbeitet sämtliche Konfigurationsfelder, zeigt den gespeicherten
-Bericht an und bietet Schaltflächen für eine **Vorschau ohne Änderungen**,
-sofortige Prüfung sowie das Aktivieren und Deaktivieren des Timers.
+Bericht an und priorisiert in der Hauptansicht die sofortige Prüfung, die
+Hardware-Eignung sowie das Aktivieren und Deaktivieren des Timers. Einstellungen,
+**Vorschau ohne Änderungen**, erneutes Laden des Berichts und Dienstdiagnose
+liegen im Hauptmenü.
 Netzwerkprüfungen laufen in einem
 Hintergrundprozess, während eine pulsierende Fortschrittsanzeige sichtbar ist;
 der Lauf kann direkt abgebrochen werden. Nach einer erfolgreichen regulären
 Prüfung wird der gespeicherte Bericht automatisch geladen und zeigt eine
 Kurzbilanz für neue, aktualisierte, entfernte und wieder erschienene Modelle.
-Bericht und Diagnose können ohne Terminal in die Zwischenablage kopiert werden.
-Eine eigene
-Schaltfläche zeigt eine strukturierte Diagnose mit Dienst- und Timerzustand,
-letztem Ergebnis, Prozessstatus, Unit-Pfaden, Zeitpunkten und den letzten 30
-Journalzeilen. Befunde erscheinen nach Fehler, Warnung und Information getrennt.
+Bericht und Diagnose können ohne Terminal in die Zwischenablage kopiert werden;
+die jeweilige Kopieraktion erscheint erst, wenn passende Daten vorliegen.
+Der Menüpunkt „Dienstdiagnose“ zeigt eine strukturierte Diagnose mit Dienst- und
+Timerzustand, letztem Ergebnis, Prozessstatus, Unit-Pfaden, Zeitpunkten und den
+letzten 30 Journalzeilen. Befunde erscheinen nach Fehler, Warnung und Information
+getrennt.
 Passende Aktionen erlauben direkt das Aktivieren des Timers, den Wechsel zur
 Konfiguration, eine erneute Prüfung oder das Wiederholen der Diagnose. Befehle
 werden immer als Argumentliste ohne Shell gestartet.
@@ -144,8 +147,8 @@ werden immer als Argumentliste ohne Shell gestartet.
 Beim ersten Aufruf erklärt ein Leerzustand den nächsten sicheren Schritt. Die
 Timeraktivierung verlangt eine Bestätigung, weil sie regelmäßige
 Netzwerkprüfungen einschaltet. Fehlermeldungen bleiben kurz; technische Details
-sind bei Bedarf aufklappbar. `Strg+S` speichert die Einstellungen, `Strg+R`
-startet eine Prüfung. Fenstergröße und zuletzt geöffneter Reiter werden lokal
+sind bei Bedarf aufklappbar. `Strg+,` öffnet die Einstellungen, `Strg+S`
+speichert sie und `Strg+R` startet eine Prüfung. Die Fenstergröße wird lokal
 als reine Darstellungspräferenz gespeichert.
 
 Neben dem nächsten täglichen Timerstart zeigt die Oberfläche den letzten

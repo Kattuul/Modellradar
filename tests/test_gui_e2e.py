@@ -86,6 +86,7 @@ class GtkWorkflowTests(unittest.TestCase):
             self.runner.callback(CommandResult(0, "Prüfung abgeschlossen.\n"))
         self.assertFalse(self.window._busy)
         self.assertFalse(self.window.actions_page.progress.get_visible())
+        self.assertFalse(self.window.actions_page.cancel_button.get_visible())
         self.assertEqual(self.output_text(self.window), "AUTOMATISCH GELADENER BERICHT\n")
         self.assertTrue(self.window.actions_page.summary_label.get_visible())
         self.assertTrue(self.window.actions_page.copy_report_button.get_sensitive())
@@ -108,11 +109,11 @@ class GtkWorkflowTests(unittest.TestCase):
             self.assertFalse(page.enable_button.get_sensitive())
             self.assertFalse(page.disable_button.get_sensitive())
         self.assertTrue(page.run_button.get_sensitive())
-        self.assertTrue(page.report_button.get_sensitive())
+        self.assertTrue(self.window.lookup_action("reload-report").get_enabled())
         self.assertIn("Manuelle Prüfungen", page.timer_label.get_text())
 
     def test_diagnose_zeigt_schweregrad_und_fuehrt_aktionen_aus(self):
-        self.window.actions_page.diagnostic_button.emit("clicked")
+        self.window.lookup_action("diagnostics").activate(None)
         self.assertEqual(self.runner.command[-1], "--json")
         self.runner.callback(CommandResult(0, json.dumps({
             "schema_version": 1,
@@ -134,9 +135,8 @@ class GtkWorkflowTests(unittest.TestCase):
         self.assertIn("Nächster Schritt: Timer aktivieren.", self.output_text(self.window))
         self.assertIn("Timer: loaded / inactive / disabled", self.output_text(self.window))
 
-        self.window.notebook.set_current_page(1)
         page.diagnostic_action_buttons["open_settings"].emit("clicked")
-        self.assertEqual(self.window.notebook.get_current_page(), 0)
+        self.assertTrue(self.window.settings_window.get_visible())
 
         with mock.patch.object(self.window, "_confirm_timer_enable") as confirm:
             page.diagnostic_action_buttons["enable_timer"].emit("clicked")
@@ -173,7 +173,7 @@ class GtkWorkflowTests(unittest.TestCase):
         )
 
     def test_diagnose_ohne_fehler_bietet_keine_reparaturaktion(self):
-        self.window.actions_page.diagnostic_button.emit("clicked")
+        self.window.lookup_action("diagnostics").activate(None)
         self.runner.callback(CommandResult(0, json.dumps({
             "schema_version": 1,
             "service": {"Result": "success"},
@@ -188,10 +188,19 @@ class GtkWorkflowTests(unittest.TestCase):
         ))
 
     def test_ungueltige_diagnose_zeigt_fehler_ohne_alte_aktionen(self):
-        self.window.actions_page.diagnostic_button.emit("clicked")
+        self.window.lookup_action("diagnostics").activate(None)
         self.runner.callback(CommandResult(0, "[]"))
         self.assertIn("kann nicht ausgewertet werden", self.window.actions_page.status_label.get_text())
         self.assertFalse(self.window.actions_page.diagnostic_panel.get_visible())
+
+    def test_hauptansicht_priorisiert_aktionen_und_menu(self):
+        page = self.window.actions_page
+        self.assertFalse(page.cancel_button.get_visible())
+        for action in ("preferences", "dry-run", "reload-report", "diagnostics"):
+            self.assertIsNotNone(self.window.lookup_action(action))
+
+        self.window.lookup_action("preferences").activate(None)
+        self.assertTrue(self.window.settings_window.get_visible())
 
     def test_fensterstart_migriert_konfiguration_und_zustand_mit_sicherung(self):
         self.window.close()

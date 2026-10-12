@@ -93,7 +93,7 @@ def load_gui_preferences(path: Path | None = None) -> dict[str, int]:
     if not isinstance(raw, dict):
         return {}
     result: dict[str, int] = {}
-    for key, lower, upper in (("page", 0, 1), ("width", 700, 2400), ("height", 560, 1600)):
+    for key, lower, upper in (("width", 700, 2400), ("height", 560, 1600)):
         value = raw.get(key)
         if isinstance(value, int) and lower <= value <= upper:
             result[key] = value
@@ -101,11 +101,11 @@ def load_gui_preferences(path: Path | None = None) -> dict[str, int]:
 
 
 def save_gui_preferences(values: dict[str, int], path: Path | None = None) -> None:
-    """Speichert Fenstergröße und letzte Ansicht atomar, nie die Radarkonfiguration."""
+    """Speichert die Fenstergröße atomar, nie die Radarkonfiguration."""
     target = path or gui_preferences_path()
     safe = {
         key: value for key, value in values.items()
-        if key in {"page", "width", "height"} and isinstance(value, int)
+        if key in {"width", "height"} and isinstance(value, int)
     }
     model_radar.atomic_write(target, json.dumps(safe, indent=2) + "\n")
 

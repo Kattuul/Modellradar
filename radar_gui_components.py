@@ -288,7 +288,7 @@ class ActionsPage(Gtk.Box):
     """Bedienseite für Prüfungen, Berichtsausgabe und Timersteuerung."""
 
     def __init__(
-        self, on_dry_run, on_force_run, on_cancel, on_load_report, on_recommendations,
+        self, on_force_run, on_cancel, on_recommendations,
         on_enable_timer, on_disable_timer, on_diagnostics, on_open_settings,
     ):
         super().__init__(
@@ -299,12 +299,16 @@ class ActionsPage(Gtk.Box):
             margin_start=24,
             margin_end=24,
         )
+        heading = Gtk.Label(label="Modellprüfung", xalign=0)
+        heading.add_css_class("title-2")
+        self.append(heading)
+        self.append(Gtk.Label(
+            label="Neue und geänderte Modelle finden oder ihre Eignung für diesen Rechner prüfen.",
+            xalign=0, wrap=True,
+        ))
         button_box = Gtk.FlowBox(
             selection_mode=Gtk.SelectionMode.NONE, column_spacing=10, row_spacing=10,
         )
-        self.dry_button = Gtk.Button(label="Vorschau ohne Änderungen")
-        self.dry_button.set_tooltip_text("Prüft die API, speichert aber weder Zustand noch Bericht.")
-        self.dry_button.connect("clicked", on_dry_run)
         self.run_button = Gtk.Button(label="Jetzt prüfen")
         self.run_button.add_css_class("suggested-action")
         self.run_button.set_tooltip_text("Startet eine reguläre Prüfung und aktualisiert danach den Bericht.")
@@ -312,18 +316,19 @@ class ActionsPage(Gtk.Box):
         self.cancel_button = Gtk.Button(label="Lauf abbrechen", sensitive=False)
         self.cancel_button.set_tooltip_text("Fordert den Abbruch der aktuell laufenden Prüfung an.")
         self.cancel_button.connect("clicked", on_cancel)
-        self.report_button = Gtk.Button(label="Gespeicherten Bericht laden")
-        self.report_button.set_tooltip_text("Lädt den zuletzt erfolgreich gespeicherten Bericht.")
-        self.report_button.connect("clicked", on_load_report)
+        self.cancel_button.set_visible(False)
         self.recommendations_button = Gtk.Button(label="Hardware-Eignung")
         self.recommendations_button.set_tooltip_text(
             "Vergleicht sichtbaren VRAM mit öffentlichen GGUF-Dateimetadaten. Lädt keine Modelle herunter."
         )
         self.recommendations_button.connect("clicked", on_recommendations)
-        for button in (self.dry_button, self.run_button, self.cancel_button, self.report_button, self.recommendations_button):
+        for button in (self.run_button, self.recommendations_button, self.cancel_button):
             button_box.append(button)
         self.append(button_box)
 
+        automation_heading = Gtk.Label(label="Automatische Prüfungen", xalign=0)
+        automation_heading.add_css_class("heading")
+        self.append(automation_heading)
         timer_box = Gtk.FlowBox(
             selection_mode=Gtk.SelectionMode.NONE, column_spacing=10, row_spacing=10,
         )
@@ -334,15 +339,14 @@ class ActionsPage(Gtk.Box):
         self.disable_button = Gtk.Button(label="Timer deaktivieren")
         self.disable_button.set_tooltip_text("Beendet nur automatische Prüfungen; manuelle Prüfungen bleiben möglich.")
         self.disable_button.connect("clicked", on_disable_timer)
-        self.diagnostic_button = Gtk.Button(label="Dienstdiagnose")
-        self.diagnostic_button.set_tooltip_text("Prüft nur den lokalen Dienst- und Timerstatus.")
-        self.diagnostic_button.connect("clicked", on_diagnostics)
         timer_box.append(self.timer_label)
         timer_box.append(self.enable_button)
         timer_box.append(self.disable_button)
-        timer_box.append(self.diagnostic_button)
         self.append(timer_box)
 
+        result_heading = Gtk.Label(label="Letztes Ergebnis", xalign=0)
+        result_heading.add_css_class("heading")
+        self.append(result_heading)
         self.check_label = Gtk.Label(label="API-Prüfstatus wird geladen …", xalign=0, wrap=True)
         self.append(self.check_label)
         self.summary_label = Gtk.Label(xalign=0, wrap=True, visible=False)
@@ -396,9 +400,11 @@ class ActionsPage(Gtk.Box):
         self.copy_report_button = Gtk.Button(label="Bericht kopieren")
         self.copy_report_button.set_tooltip_text("Kopiert den vollständigen Bericht in die Zwischenablage.")
         self.copy_report_button.connect("clicked", lambda *_: self._copy_text(self.report_text, "Bericht"))
+        self.copy_report_button.set_visible(False)
         self.copy_diagnostic_button = Gtk.Button(label="Diagnose kopieren")
         self.copy_diagnostic_button.set_tooltip_text("Kopiert die Dienstdiagnose in die Zwischenablage.")
         self.copy_diagnostic_button.connect("clicked", lambda *_: self._copy_text(self.diagnostic_text, "Diagnose"))
+        self.copy_diagnostic_button.set_visible(False)
         copy_box.append(self.copy_report_button)
         copy_box.append(self.copy_diagnostic_button)
         self.append(copy_box)
@@ -431,13 +437,14 @@ class ActionsPage(Gtk.Box):
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
         for button in (
-            self.dry_button, self.run_button, self.report_button, self.recommendations_button, self.enable_button,
-            self.disable_button, self.diagnostic_button,
+            self.run_button, self.recommendations_button, self.enable_button,
+            self.disable_button,
             *self.diagnostic_action_buttons.values(),
         ):
             button.set_sensitive(not busy)
         self._update_timer_buttons()
         self.cancel_button.set_sensitive(busy)
+        self.cancel_button.set_visible(busy)
         self.progress.set_visible(busy)
         if busy and not self._pulse_source:
             self._pulse_source = GLib.timeout_add(120, self._pulse)
@@ -470,6 +477,7 @@ class ActionsPage(Gtk.Box):
     def set_report(self, report: str, summary: dict[str, str]) -> None:
         self.report_text = report
         self.copy_report_button.set_sensitive(bool(report))
+        self.copy_report_button.set_visible(bool(report))
         self.summary_label.set_text(
             "Letzte Prüfung: {checked_at}\nPassende Repositories: {repositories} · Änderungen: {changes}\n"
             "Neu: {new} · Aktualisiert: {updated} · Entfernt: {removed} · Wieder erschienen: {returned}".format(**summary)
@@ -619,4 +627,5 @@ class ActionsPage(Gtk.Box):
         detail_lines.extend(["Letzte Journalzeilen", "-------------------", journal])
         self.diagnostic_text = "\n".join(detail_lines) + "\n"
         self.copy_diagnostic_button.set_sensitive(True)
+        self.copy_diagnostic_button.set_visible(True)
         self.set_output(self.diagnostic_text)

@@ -96,7 +96,7 @@ Erkannte Lebenszyklusänderungen: 4
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state" / "gui-preferences.json"
             logic.save_gui_preferences({"page": 1, "width": 1000, "height": 700, "ignored": 9}, path)
-            self.assertEqual(logic.load_gui_preferences(path), {"page": 1, "width": 1000, "height": 700})
+            self.assertEqual(logic.load_gui_preferences(path), {"width": 1000, "height": 700})
             path.write_text("kein JSON", encoding="utf-8")
             self.assertEqual(logic.load_gui_preferences(path), {})
 
