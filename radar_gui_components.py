@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 import model_radar  # noqa: E402
 import radar_gui_logic as logic  # noqa: E402
@@ -354,6 +355,86 @@ def _icon_button(icon: str, tooltip: str, callback) -> Gtk.Button:
     return button
 
 
+# Zustände tragen immer Symbol und Text, damit sie nicht nur über Farbe erkennbar sind.
+REPORT_STATUS_STYLES = {
+    "NEU": ("list-add-symbolic", "accent"),
+    "AKTUALISIERT": ("view-refresh-symbolic", "accent"),
+    "ENTFERNT": ("list-remove-symbolic", "warning"),
+    "WIEDER ERSCHIENEN": ("edit-undo-symbolic", "success"),
+}
+HARDWARE_RATING_STYLES = {
+    "GUT PASSEND": ("object-select-symbolic", "success"),
+    "EINGESCHRÄNKT": ("dialog-warning-symbolic", "warning"),
+    "UNBEKANNT": ("dialog-question-symbolic", "dim-label"),
+    "NICHT EMPFOHLEN": ("action-unavailable-symbolic", "error"),
+}
+SEVERITY_ICONS = {
+    "error": "dialog-error-symbolic", "warning": "dialog-warning-symbolic", "info": "dialog-information-symbolic",
+}
+
+
+def _available_icon(*names: str) -> str:
+    """Wählt das erste vorhandene Symbol; ältere Adwaita-Versionen kennen nicht alle Namen."""
+    display = Gdk.Display.get_default()
+    theme = Gtk.IconTheme.get_for_display(display) if display is not None else None
+    for name in names:
+        if theme is None or theme.has_icon(name):
+            return name
+    return names[-1]
+
+
+def _status_icon(icon: str, css_class: str) -> Gtk.Image:
+    image = Gtk.Image(icon_name=icon, valign=Gtk.Align.CENTER, accessible_role=Gtk.AccessibleRole.PRESENTATION)
+    image.add_css_class(css_class)
+    return image
+
+
+def open_uri(widget: Gtk.Widget, uri: str) -> None:
+    """Öffnet eine Modellkarte im Browser; im Flatpak übernimmt das Portal."""
+    root = widget.get_root()
+    if hasattr(Gtk, "UriLauncher"):
+        Gtk.UriLauncher.new(uri).launch(root, None, None, None)
+    else:  # GTK < 4.10 (Debian 12)
+        Gtk.show_uri(root, uri, Gdk.CURRENT_TIME)
+
+
+def _link_row(title: str, uri: str) -> Adw.ActionRow:
+    row = Adw.ActionRow(title=title, subtitle=_plain(uri), activatable=True)
+    row.add_suffix(Gtk.Image(
+        icon_name=_available_icon("adw-external-link-symbolic", "web-browser-symbolic"),
+        accessible_role=Gtk.AccessibleRole.PRESENTATION,
+    ))
+    row.connect("activated", lambda *_: open_uri(row, uri))
+    return row
+
+
+def _result_column() -> tuple[Gtk.ScrolledWindow, Gtk.Box]:
+    """Einheitlicher Seitenrahmen: gleiche Breite und Abstände wie die Übersicht."""
+    box = Gtk.Box(
+        orientation=Gtk.Orientation.VERTICAL, spacing=18,
+        margin_top=24, margin_bottom=24, margin_start=24, margin_end=24,
+    )
+    scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
+    scroll.set_child(Adw.Clamp(maximum_size=720, child=box))
+    return scroll, box
+
+
+def _raw_text_expander(label: str, accessible: str) -> tuple[Gtk.Expander, Gtk.TextView]:
+    """Rohtext bleibt für Fachleute und zum Kopieren erreichbar, aber eingeklappt."""
+    expander = Gtk.Expander(label=label, use_underline=True)
+    view, scroll = _readonly_text_view(accessible)
+    scroll.set_min_content_height(260)
+    scroll.set_margin_top(8)
+    expander.set_child(scroll)
+    return expander, view
+
+
+def _clear_group(group: Adw.PreferencesGroup, rows: list[Gtk.Widget]) -> None:
+    for row in rows:
+        group.remove(row)
+    rows.clear()
+
+
 class NavigationHost:
     """Hierarchische Navigation: Adw.NavigationView ab libadwaita 1.4, sonst Gtk.Stack.
 
@@ -633,8 +714,10 @@ class DashboardPage(Gtk.ScrolledWindow):
 
     def set_report_summary(self, summary: dict[str, str]) -> None:
         self.report_row.set_subtitle(_plain(
-            "Letzte Prüfung: {checked_at}\nNeu: {new} · Aktualisiert: {updated} · "
-            "Entfernt: {removed} · Wieder erschienen: {returned}".format(**summary)
+            "Letzte Prüfung: {checked}\nNeu: {new} · Aktualisiert: {updated} · "
+            "Entfernt: {removed} · Wieder erschienen: {returned}".format(
+                checked=logic.format_timestamp(summary["checked_at"]), **summary,
+            )
         ))
         self.report_row.set_sensitive(True)
 
@@ -653,7 +736,9 @@ class DashboardPage(Gtk.ScrolledWindow):
         if status.error:
             subtitle = "Nicht verfügbar · Manuelle Prüfungen sind weiterhin möglich."
         elif enabled:
-            subtitle = "Eingeschaltet" + (f" · nächster Start: {status.next_run}" if status.next_run else "")
+            subtitle = "Eingeschaltet" + (
+                f" · nächster Start: {logic.format_timer_time(status.next_run)}" if status.next_run else ""
+            )
         else:
             subtitle = "Ausgeschaltet · Prüfungen nur manuell"
         self.timer_row.set_subtitle(_plain(subtitle))
@@ -675,7 +760,9 @@ class DashboardPage(Gtk.ScrolledWindow):
 
 
 class ReportPage(_StatefulPage):
-    """Vollständiger Bericht mit Kurzbilanz; zeigt auf Wunsch auch eine Vorschau."""
+    """Bericht als Kennzahlen und Ereigniskarten; der Rohtext bleibt einklappbar."""
+
+    STATS = (("new", "Neu"), ("updated", "Aktualisiert"), ("removed", "Entfernt"), ("returned", "Wieder erschienen"))
 
     def __init__(self, on_cancel, notify: Callable[[str], None]):
         super().__init__(
@@ -690,30 +777,92 @@ class ReportPage(_StatefulPage):
             lambda *_: copy_to_clipboard(self, self.shown_text, "Bericht", self.notify),
         )
         self.copy_button.set_sensitive(False)
-        result = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
-                         margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        result, box = _result_column()
         self.preview_label = Gtk.Label(
             label="Vorschau ohne Änderungen: Dieses Ergebnis wurde nicht gespeichert.",
             xalign=0, wrap=True, visible=False,
         )
         self.preview_label.add_css_class("warning")
-        result.append(self.preview_label)
+        box.append(self.preview_label)
         self.summary_label = Gtk.Label(xalign=0, wrap=True)
-        self.summary_label.add_css_class("heading")
-        result.append(self.summary_label)
-        self.text_view, scroll = _readonly_text_view("Berichtstext")
-        result.append(scroll)
+        self.summary_label.add_css_class("dim-label")
+        box.append(self.summary_label)
+
+        stats = Gtk.Box(spacing=12, homogeneous=True)
+        self.stat_values: dict[str, Gtk.Label] = {}
+        self.stat_cards: dict[str, Gtk.Box] = {}
+        for key, label in self.STATS:
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            card.add_css_class("card")
+            value = Gtk.Label(label="0", margin_top=12)
+            value.add_css_class("title-1")
+            caption = Gtk.Label(
+                label=label, wrap=True, justify=Gtk.Justification.CENTER, margin_bottom=12,
+                margin_start=6, margin_end=6,
+            )
+            caption.add_css_class("caption")
+            card.append(value)
+            card.append(caption)
+            stats.append(card)
+            self.stat_values[key] = value
+            self.stat_cards[key] = card
+        box.append(stats)
+
+        self.events_group = Adw.PreferencesGroup(
+            title="Änderungen",
+            description="Mögliche Nachfolger – das Radar sagt nichts über Eignung oder Qualität aus.",
+        )
+        self._event_rows: list[Gtk.Widget] = []
+        box.append(self.events_group)
+        self.raw_details, self.text_view = _raw_text_expander("_Vollständigen Bericht anzeigen", "Berichtstext")
+        box.append(self.raw_details)
         self.add_result(result)
+
+    def _event_row(self, event: dict) -> Adw.ExpanderRow:
+        fields = event["fields"]
+        status = logic.REPORT_STATUS_LABELS[event["status"]]
+        details = [status] + [value for value in (fields.get("Familie"), fields.get("Parametergröße")) if value]
+        row = Adw.ExpanderRow(title=_plain(event["repo_id"]), subtitle=_plain(" · ".join(details)))
+        icon, css_class = REPORT_STATUS_STYLES[event["status"]]
+        row.add_prefix(_status_icon(icon, css_class))
+        for label in ("Herausgeber", "Änderungsdatum", "Typ", "GGUF-Quantisierungen", "Erkennungsgrund"):
+            value = fields.get(label)
+            if not value:
+                continue
+            if label == "Änderungsdatum":
+                value = logic.format_timestamp(value)
+            detail = Adw.ActionRow(title=label, subtitle=_plain(value), subtitle_lines=0)
+            detail.add_css_class("property")
+            row.add_row(detail)
+        if fields.get("Link"):
+            row.add_row(_link_row("Modellkarte öffnen", fields["Link"]))
+        return row
 
     def _show(self, text: str, summary: dict[str, str], preview: bool) -> None:
         self.shown_text = text
         self.preview_label.set_visible(preview)
         self.summary_label.set_text(
-            "Passende Repositories: {repositories} · Änderungen: {changes}\n"
-            "Neu: {new} · Aktualisiert: {updated} · Entfernt: {removed} · "
-            "Wieder erschienen: {returned}".format(**summary)
+            "Geprüft: {checked} · {repositories} passende Repositories · {changes} Änderungen".format(
+                checked=logic.format_timestamp(summary["checked_at"]), **summary,
+            )
         )
+        for key, label in self.STATS:
+            self.stat_values[key].set_text(summary[key])
+            describe(self.stat_cards[key], f"{label}: {summary[key]}")
+        _clear_group(self.events_group, self._event_rows)
+        events = logic.report_events(text)
+        for event in events:
+            self._event_rows.append(self._event_row(event))
+        if not events:
+            empty = Adw.ActionRow(
+                title="Keine Änderungen", subtitle="Seit der vorherigen Prüfung ist nichts Neues dazugekommen.",
+            )
+            empty.add_prefix(_status_icon("object-select-symbolic", "success"))
+            self._event_rows.append(empty)
+        for row in self._event_rows:
+            self.events_group.add(row)
         self.text_view.get_buffer().set_text(text)
+        self.raw_details.set_expanded(False)
         self.copy_button.set_sensitive(bool(text))
         self.show_result()
 
@@ -750,8 +899,9 @@ class HardwarePage(_StatefulPage):
         )
         self.copy_button.set_sensitive(False)
         self.refresh_button = _icon_button("view-refresh-symbolic", "Neu berechnen", on_refresh)
-        intro = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
-                        margin_top=12, margin_start=12, margin_end=12)
+        # Einleitung und Grafikkarte scrollen mit, damit kleine Bildschirme Platz für die Liste haben.
+        result, box = _result_column()
+        intro = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         intro.append(Gtk.Label(
             label="Vergleicht den sichtbaren Grafikspeicher mit den öffentlichen Größenangaben der "
             "Modelldateien. Es wird nichts heruntergeladen; das Ergebnis ist ein vorsichtiger Richtwert.",
@@ -767,13 +917,50 @@ class HardwarePage(_StatefulPage):
         ))
         graphics_list.append(self.graphics_row)
         intro.append(graphics_list)
-        self.prepend(intro)
-        self.text_view, scroll = _readonly_text_view("Ergebnis der Hardware-Eignung")
-        scroll.set_margin_top(12)
-        scroll.set_margin_bottom(12)
-        scroll.set_margin_start(12)
-        scroll.set_margin_end(12)
-        self.add_result(scroll)
+        box.append(intro)
+        self.notes_label = Gtk.Label(xalign=0, wrap=True, visible=False)
+        self.notes_label.add_css_class("dim-label")
+        box.append(self.notes_label)
+        self.items_group = Adw.PreferencesGroup(
+            title="Modelldateien",
+            description="Sortiert von „Gut passend“ bis „Nicht empfohlen“. "
+            "Der Richtwert schätzt den benötigten Grafikspeicher.",
+        )
+        self._item_rows: list[Gtk.Widget] = []
+        box.append(self.items_group)
+        self.raw_details, self.text_view = _raw_text_expander(
+            "_Vollständiges Ergebnis anzeigen", "Ergebnis der Hardware-Eignung",
+        )
+        box.append(self.raw_details)
+        self.add_result(result)
+
+    @staticmethod
+    def _variant_text(variant: str) -> str:
+        """„datei.gguf, Q4_K_M, Datei: 5.40 GiB“ → Dateiname plus Größen mit Dezimalkomma."""
+        name, *rest = [part.strip() for part in variant.split(", ")]
+        rest = [re.sub(r"(\d)\.(\d)", r"\1,\2", part).replace(": ", " ") for part in rest]
+        return "\n".join([name] + ([" · ".join(rest)] if rest else []))
+
+    def _item_row(self, item: dict) -> Adw.ActionRow:
+        fields = item["fields"]
+        lines = [logic.HARDWARE_RATING_LABELS[item["status"]]]
+        if fields.get("Variante"):
+            lines.append(self._variant_text(fields["Variante"]))
+        if fields.get("Begründung"):
+            lines.append(fields["Begründung"])
+        row = Adw.ActionRow(title=_plain(item["repo_id"]), subtitle=_plain("\n".join(lines)), subtitle_lines=0)
+        icon, css_class = HARDWARE_RATING_STYLES[item["status"]]
+        row.add_prefix(_status_icon(icon, css_class))
+        url = fields.get("Modellkarte")
+        if url:
+            row.set_activatable(True)
+            row.set_tooltip_text("Modellkarte im Browser öffnen")
+            row.add_suffix(Gtk.Image(
+                icon_name=_available_icon("adw-external-link-symbolic", "web-browser-symbolic"),
+                accessible_role=Gtk.AccessibleRole.PRESENTATION,
+            ))
+            row.connect("activated", lambda *_: open_uri(row, url))
+        return row
 
     def set_graphics(self, title: str, detail: str) -> None:
         self.graphics_row.set_title(_plain(title))
@@ -784,7 +971,24 @@ class HardwarePage(_StatefulPage):
 
     def set_result(self, text: str) -> None:
         self.result_text = text
+        parsed = logic.hardware_result(text)
+        notes = ([f"Berücksichtigter Grafikspeicher: {parsed['vram']}"] if parsed["vram"] else []) + [
+            f"Hinweis: {note}" for note in parsed["notes"]
+        ]
+        self.notes_label.set_text("\n".join(notes))
+        self.notes_label.set_visible(bool(notes))
+        _clear_group(self.items_group, self._item_rows)
+        for item in parsed["items"]:
+            self._item_rows.append(self._item_row(item))
+        if not parsed["items"]:
+            self._item_rows.append(Adw.ActionRow(
+                title="Keine bewertbaren Modelldateien",
+                subtitle="Details stehen im vollständigen Ergebnis.", subtitle_lines=0,
+            ))
+        for row in self._item_rows:
+            self.items_group.add(row)
         self.text_view.get_buffer().set_text(text or "Keine Ausgabe.")
+        self.raw_details.set_expanded(not parsed["items"])
         self.copy_button.set_sensitive(bool(text))
         self.show_result()
         announce(self, "Hardware-Eignung berechnet.")
@@ -807,12 +1011,11 @@ class DiagnosticsPage(_StatefulPage):
         )
         self.copy_button.set_sensitive(False)
         self.refresh_button = _icon_button("view-refresh-symbolic", "Diagnose wiederholen", on_retry)
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                          margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
+        result, content = _result_column()
         self.diagnostic_title = Gtk.Label(label="Dienstdiagnose", xalign=0, wrap=True)
         self.diagnostic_title.add_css_class("title-3")
         content.append(self.diagnostic_title)
-        self.diagnostic_findings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.diagnostic_findings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         content.append(self.diagnostic_findings)
         actions = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, column_spacing=8, row_spacing=8)
         self.diagnostic_action_buttons = {
@@ -837,8 +1040,6 @@ class DiagnosticsPage(_StatefulPage):
         scroll.set_min_content_height(240)
         self.details.set_child(scroll)
         content.append(self.details)
-        result = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
-        result.set_child(Adw.Clamp(maximum_size=760, child=content))
         self.add_result(result)
         self._timer_available = False
         self._busy = False
@@ -854,6 +1055,25 @@ class DiagnosticsPage(_StatefulPage):
         self._timer_available = available
         self.diagnostic_action_buttons["enable_timer"].set_sensitive(available and not self._busy)
 
+    @staticmethod
+    def _finding_card(severity: str, title: str, text: str) -> Gtk.Widget:
+        """Befund als Karte: Symbol und Text tragen den Schweregrad, die Farbe ergänzt nur."""
+        card = Gtk.Box(spacing=12)
+        card.add_css_class("card")
+        icon = SEVERITY_ICONS.get(severity, "object-select-symbolic")
+        image = _status_icon(icon, severity)
+        image.set_valign(Gtk.Align.START)
+        image.set_margin_top(14)
+        image.set_margin_start(14)
+        card.append(image)
+        column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4,
+                         margin_top=12, margin_bottom=12, margin_end=14, hexpand=True)
+        heading = Gtk.Label(label=title, xalign=0, wrap=True)
+        heading.add_css_class("heading")
+        column.append(heading)
+        column.append(Gtk.Label(label=text, xalign=0, wrap=True))
+        card.append(column)
+        return card
 
     def set_diagnostics(self, output: str) -> None:
         """Zeigt JSON-Diagnose nach Schweregrad und mit passenden Aktionen an."""
@@ -931,17 +1151,10 @@ class DiagnosticsPage(_StatefulPage):
             title = str(finding.get("title", "Befund"))
             detail = str(finding.get("detail", ""))
             recommendation = str(finding.get("recommendation", ""))
-            row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            heading = Gtk.Label(
-                label=f"{severity_labels[severity]}: {title}", xalign=0, wrap=True,
-            )
-            heading.add_css_class(severity)
-            row.append(heading)
-            description = Gtk.Label(
-                label=f"{detail}\nNächster Schritt: {recommendation}", xalign=0, wrap=True,
-            )
-            row.append(description)
-            self.diagnostic_findings.append(row)
+            self.diagnostic_findings.append(self._finding_card(
+                severity, f"{severity_labels[severity]}: {title}",
+                f"{detail}\nNächster Schritt: {recommendation}",
+            ))
             detail_lines.extend([
                 f"[{severity_labels[severity]}] {title}: {detail}",
                 f"Nächster Schritt: {recommendation}", "",
@@ -952,12 +1165,10 @@ class DiagnosticsPage(_StatefulPage):
 
         if not findings:
             counts["info"] = 1
-            ok = Gtk.Label(
-                label="INFO: Keine offensichtlichen Dienst- oder Timerfehler erkannt.",
-                xalign=0, wrap=True,
-            )
-            ok.add_css_class("success")
-            self.diagnostic_findings.append(ok)
+            self.diagnostic_findings.append(self._finding_card(
+                "success", "INFO: Keine offensichtlichen Dienst- oder Timerfehler erkannt.",
+                "Dienst und Timer sind eingerichtet. Es ist nichts weiter zu tun.",
+            ))
             detail_lines.append("Keine offensichtlichen Dienst- oder Timerfehler erkannt.")
 
         for action in requested_actions:

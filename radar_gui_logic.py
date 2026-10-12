@@ -194,6 +194,66 @@ def report_summary(report: str) -> dict[str, str]:
     return values
 
 
+REPORT_STATUS_LABELS = {
+    "NEU": "Neu", "AKTUALISIERT": "Aktualisiert", "ENTFERNT": "Entfernt",
+    "WIEDER ERSCHIENEN": "Wieder erschienen",
+}
+HARDWARE_RATING_LABELS = {
+    "GUT PASSEND": "Gut passend", "EINGESCHRÄNKT": "Eingeschränkt",
+    "UNBEKANNT": "Unbekannt", "NICHT EMPFOHLEN": "Nicht empfohlen",
+}
+_ENTRY_PATTERN = re.compile(r"^\[([A-ZÄÖÜ ]+)\] (\S+)$")
+_FIELD_PATTERN = re.compile(r"^  ([^:]+): (.*)$")
+
+
+def _entries(text: str, labels: dict[str, str]) -> list[dict[str, Any]]:
+    """Liest eingerückte Einträge der Form „[STATUS] repo“ samt „  Feld: Wert“."""
+    entries: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for line in text.splitlines():
+        match = _ENTRY_PATTERN.match(line)
+        if match and match.group(1) in labels:
+            current = {"status": match.group(1), "repo_id": match.group(2), "fields": {}}
+            entries.append(current)
+            continue
+        field = _FIELD_PATTERN.match(line) if current is not None else None
+        if field:
+            current["fields"][field.group(1)] = field.group(2)
+        else:
+            current = None
+    return entries
+
+
+def report_events(report: str) -> list[dict[str, Any]]:
+    """Entnimmt dem Bericht die Lebenszyklusereignisse für die Kartenansicht."""
+    return _entries(report, REPORT_STATUS_LABELS)
+
+
+def hardware_result(text: str) -> dict[str, Any]:
+    """Zerlegt die Hardware-Eignung in VRAM-Angabe, Hinweise und Bewertungen."""
+    vram = re.search(r"^Sichtbarer dedizierter VRAM:\s*(.+)$", text, re.MULTILINE)
+    return {
+        "vram": vram.group(1).replace(".", ",") if vram else "",
+        "notes": re.findall(r"^Hinweis:\s*(.+)$", text, re.MULTILINE),
+        "items": _entries(text, HARDWARE_RATING_LABELS),
+    }
+
+
+def format_timestamp(value: str) -> str:
+    """Formatiert ISO-Zeitstempel aus Berichten lesbar; Unbekanntes bleibt unverändert."""
+    parsed = model_radar.parse_timestamp(value)
+    return _format_utc(parsed) if parsed is not None else value
+
+
+def format_timer_time(value: str) -> str:
+    """Kürzt systemd-Zeiten wie „Tue 2026-10-13 00:09:53 CEST“ auf „13.10.2026 00:09 CEST“."""
+    match = re.search(r"(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::\d{2})?(?: (\S+))?", value)
+    if not match:
+        return value
+    year, month, day, hour, minute, zone = match.groups()
+    return f"{day}.{month}.{year} {hour}:{minute}" + (f" {zone}" if zone else "")
+
+
 def validate_data_path(value: str, label: str) -> str:
     if not value.strip():
         raise model_radar.RadarError(f"{label} darf nicht leer sein.")

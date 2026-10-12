@@ -111,6 +111,40 @@ Erkannte Lebenszyklusänderungen: 4
             logic.save_gui_preferences({"width": 500, "height": 420}, path)
             self.assertEqual(logic.load_gui_preferences(path), {"width": 500, "height": 420})
 
+    def test_bericht_wird_in_ereigniskarten_zerlegt(self):
+        report = (
+            "Prüfzeitpunkt (UTC): 2026-10-12T12:23:22+00:00\n\nLebenszyklusereignisse\n---\n\n"
+            "[NEU] org/Modell-9B\n  Familie: Qwen3.8\n  Link: https://huggingface.co/org/Modell-9B\n\n"
+            "[WIEDER ERSCHIENEN] org/alt\n  Erkennungsgrund: wieder sichtbar; Familie: frei\n\n"
+            "Filterdiagnose\n---------------\n  - org/verworfen: 27B außerhalb 2–24B\n"
+        )
+        events = logic.report_events(report)
+        self.assertEqual([(item["status"], item["repo_id"]) for item in events],
+                         [("NEU", "org/Modell-9B"), ("WIEDER ERSCHIENEN", "org/alt")])
+        self.assertEqual(events[0]["fields"]["Link"], "https://huggingface.co/org/Modell-9B")
+        # Nur der erste Doppelpunkt trennt Feldname und Wert.
+        self.assertEqual(events[1]["fields"]["Erkennungsgrund"], "wieder sichtbar; Familie: frei")
+        self.assertEqual(logic.report_events("[UNBEKANNT] org/x\n"), [])
+
+    def test_hardware_ergebnis_wird_nach_bewertung_zerlegt(self):
+        result = logic.hardware_result(
+            "Sichtbarer dedizierter VRAM: 12.0 GiB\n\nHinweis: org/b: keine Größe\n\n"
+            "[GUT PASSEND] org/a-GGUF\n  Variante: a.gguf, Q4_K_M\n  Modellkarte: https://huggingface.co/org/a-GGUF\n"
+            "[NICHT EMPFOHLEN] org/c-GGUF\n  Begründung: zu groß\n"
+        )
+        self.assertEqual(result["vram"], "12,0 GiB")
+        self.assertEqual(result["notes"], ["org/b: keine Größe"])
+        self.assertEqual([item["status"] for item in result["items"]], ["GUT PASSEND", "NICHT EMPFOHLEN"])
+        self.assertEqual(result["items"][0]["fields"]["Variante"], "a.gguf, Q4_K_M")
+        self.assertEqual(logic.hardware_result("")["items"], [])
+
+    def test_zeitangaben_werden_lesbar_formatiert(self):
+        self.assertEqual(logic.format_timestamp("2026-10-12T12:23:22+00:00"), "12.10.2026 12:23 UTC")
+        self.assertEqual(logic.format_timestamp("2026-10-11T08:00:00.000Z"), "11.10.2026 08:00 UTC")
+        self.assertEqual(logic.format_timestamp("Unbekannt"), "Unbekannt")
+        self.assertEqual(logic.format_timer_time("Tue 2026-10-13 00:09:53 CEST"), "13.10.2026 00:09 CEST")
+        self.assertEqual(logic.format_timer_time("n/a"), "n/a")
+
     def test_einfuehrungsstand_wird_gespeichert_und_begrenzt(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "gui-preferences.json"

@@ -390,7 +390,7 @@ class GtkWorkflowTests(unittest.TestCase):
         self.runner.callback(CommandResult(0, "VORSCHAU\n[NEU] org/modell\n"))
         self.assertEqual(self.output_text(self.window), "VORSCHAU\n[NEU] org/modell\n")
         self.assertTrue(self.window.report_page.preview_label.get_visible())
-        self.assertIn("Neu: 1", self.window.report_page.summary_label.get_text())
+        self.assertEqual(self.window.report_page.stat_values["new"].get_text(), "1")
 
         # Über das Dashboard erscheint wieder der gespeicherte Bericht.
         self.window.navigation.pop()
@@ -425,6 +425,42 @@ class GtkWorkflowTests(unittest.TestCase):
         self.runner.callback(CommandResult(1, "Netzwerkfehler"))
         self.assertEqual(page.state(), "error")
         self.assertIn("Netzwerkfehler", page.error_label.get_text())
+
+    def test_bericht_und_eignung_erscheinen_als_karten_mit_text_statt_nur_farbe(self):
+        page = self.window.report_page
+        report = (
+            "Prüfzeitpunkt (UTC): 2026-10-12T12:23:22+00:00\nPassende Repositories: 3\n"
+            "Erkannte Lebenszyklusänderungen: 1\n\n"
+            "[ENTFERNT] org/<b>Modell</b>\n  Familie: Q&A\n  Link: https://huggingface.co/org/m\n"
+        )
+        page.set_report(report, logic.report_summary(report))
+        self.assertEqual(page.stat_values["removed"].get_text(), "1")
+        self.assertIn("12.10.2026 12:23 UTC", page.summary_label.get_text())
+        row = page._event_rows[0]
+        # Markup aus Fremddaten wird angezeigt, nicht interpretiert; der Status steht als Text da.
+        self.assertEqual(row.get_title(), "org/&lt;b&gt;Modell&lt;/b&gt;")
+        self.assertTrue(row.get_subtitle().startswith("Entfernt · Q&amp;A"))
+        self.assertFalse(page.raw_details.get_expanded())
+        self.assertEqual(page.text(), report)
+
+        page.set_report("Keine Änderungen\n", logic.report_summary(""))
+        self.assertEqual([r.get_title() for r in page._event_rows], ["Keine Änderungen"])
+
+        hardware = self.window.hardware_page
+        hardware.set_result(
+            "Sichtbarer dedizierter VRAM: 8.0 GiB\n\n[EINGESCHRÄNKT] org/a-GGUF\n"
+            "  Variante: a-Q4_K_M.gguf, Q4_K_M, Datei: 5.40 GiB, Richtwert: 7.10 GiB\n"
+            "  Modellkarte: https://huggingface.co/org/a-GGUF\n"
+        )
+        item = hardware._item_rows[0]
+        self.assertEqual(item.get_title(), "org/a-GGUF")
+        self.assertEqual(item.get_subtitle(),
+                         "Eingeschränkt\na-Q4_K_M.gguf\nQ4_K_M · Datei 5,40 GiB · Richtwert 7,10 GiB")
+        self.assertTrue(item.get_activatable())
+        self.assertIn("8,0 GiB", hardware.notes_label.get_text())
+        # Ohne erkennbare Bewertungen bleibt der Rohtext sofort sichtbar.
+        hardware.set_result("Unerwartete Ausgabe\n")
+        self.assertTrue(hardware.raw_details.get_expanded())
 
     def test_pruefung_aus_diagnose_kehrt_zur_uebersicht_zurueck(self):
         self.window.lookup_action("diagnostics").activate(None)
