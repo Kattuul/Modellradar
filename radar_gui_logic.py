@@ -83,6 +83,23 @@ def gui_preferences_path() -> Path:
     return state_home / "qwen35-model-radar" / "gui-preferences.json"
 
 
+# Kleinste sinnvolle Fenstergröße; passt auch auf 1024×600 neben Panels und Docks.
+MIN_WINDOW_SIZE = (480, 400)
+DEFAULT_WINDOW_SIZE = (920, 720)
+# Platz für Panels, Docks und Fensterrahmen, den die Monitorgeometrie nicht abzieht.
+SCREEN_RESERVE = (64, 64)
+
+
+def fit_window_size(
+    width: int, height: int, screen: tuple[int, int] | None, minimum: tuple[int, int] = MIN_WINDOW_SIZE,
+) -> tuple[int, int]:
+    """Verkleinert eine Wunschgröße so weit, dass das Fenster vollständig auf den Bildschirm passt."""
+    if screen:
+        width = min(width, screen[0] - SCREEN_RESERVE[0])
+        height = min(height, screen[1] - SCREEN_RESERVE[1])
+    return max(width, minimum[0]), max(height, minimum[1])
+
+
 def load_gui_preferences(path: Path | None = None) -> dict[str, int]:
     """Lädt ausschließlich harmlose Darstellungswerte aus einer lokalen Datei."""
     target = path or gui_preferences_path()
@@ -94,7 +111,7 @@ def load_gui_preferences(path: Path | None = None) -> dict[str, int]:
         return {}
     result: dict[str, int] = {}
     for key, lower, upper in (
-        ("width", 700, 2400), ("height", 560, 1600), ("onboarding_version", 0, 1000),
+        ("width", MIN_WINDOW_SIZE[0], 4000), ("height", MIN_WINDOW_SIZE[1], 3000), ("onboarding_version", 0, 1000),
     ):
         value = raw.get(key)
         if isinstance(value, int) and lower <= value <= upper:

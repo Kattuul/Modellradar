@@ -998,6 +998,7 @@ class OnboardingView(Gtk.Box):
         self._on_finish = on_finish
         self._finished = False
         self._page_texts: list[str] = []
+        self._status_pages: list[tuple[Adw.StatusPage, str]] = []
 
         self.carousel = Adw.Carousel(vexpand=True, allow_scroll_wheel=False)
         self.carousel.append(self._welcome_page())
@@ -1014,10 +1015,19 @@ class OnboardingView(Gtk.Box):
         self.next_button.connect("clicked", lambda *_: self.go_to(self.position() + 1))
         navigation.set_start_widget(self.back_button)
         # Die Punkte sind rein optisch; den Schritt nennt die Titelzeile auch in Worten.
-        navigation.set_center_widget(Adw.CarouselIndicatorDots(
+        self.dots = Adw.CarouselIndicatorDots(
             carousel=self.carousel, accessible_role=Gtk.AccessibleRole.PRESENTATION,
-        ))
-        navigation.set_end_widget(self.next_button)
+        )
+        navigation.set_center_widget(self.dots)
+        # Die Hauptaktion der letzten Seite sitzt in der festen Leiste statt im scrollbaren Inhalt,
+        # damit sie auch bei 1024×600 ohne Scrollen sichtbar bleibt.
+        self.start_button = Gtk.Button(label="_Erste Prüfung starten", use_underline=True)
+        self.start_button.add_css_class("suggested-action")
+        self.start_button.connect("clicked", lambda *_: self.finish(True))
+        end = Gtk.Box()
+        end.append(self.next_button)
+        end.append(self.start_button)
+        navigation.set_end_widget(end)
         self.append(navigation)
 
         self.step_label = Gtk.Label()
@@ -1034,6 +1044,7 @@ class OnboardingView(Gtk.Box):
         )
         page.add_css_class("compact")
         self._page_texts.append(f"{title}. {description}")
+        self._status_pages.append((page, icon))
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         for child in children:
             box.append(child)
@@ -1092,10 +1103,6 @@ class OnboardingView(Gtk.Box):
             ("computer-symbolic", "3. Optional: „Hardware-Eignung“",
              "Zeigt, welche Modelldateien voraussichtlich in den Grafikspeicher passen."),
         )
-        self.start_button = Gtk.Button(label="_Erste Prüfung starten", use_underline=True, halign=Gtk.Align.CENTER)
-        self.start_button.add_css_class("suggested-action")
-        self.start_button.add_css_class("pill")
-        self.start_button.connect("clicked", lambda *_: self.finish(True))
         self.look_around_button = Gtk.Button(
             label="Erst einmal _umsehen", use_underline=True, halign=Gtk.Align.CENTER,
         )
@@ -1105,7 +1112,7 @@ class OnboardingView(Gtk.Box):
             "media-playback-start-symbolic", "So geht es los",
             "Drei Schritte genügen für den Einstieg. Diese Einführung lässt sich "
             "jederzeit über das Hauptmenü (☰) erneut öffnen.",
-            steps, self.start_button, self.look_around_button,
+            steps, self.look_around_button,
         )
 
     def set_hardware(self, title: str, detail: str) -> None:
@@ -1128,6 +1135,16 @@ class OnboardingView(Gtk.Box):
         self.timer_row.set_title(title)
         self.timer_row.set_subtitle(subtitle)
 
+    def set_layout(self, compact: bool, narrow: bool) -> None:
+        """Passt die Einführung an kleine Bildschirme wie 1024×600 an.
+
+        Niedrig: Die großen Symbole entfallen, sie sind reine Dekoration.
+        Schmal: Die Seitenpunkte entfallen; den Schritt nennt weiter die Titelzeile.
+        """
+        for page, icon in self._status_pages:
+            page.set_icon_name(None if compact else icon)
+        self.dots.set_visible(not narrow)
+
     def position(self) -> int:
         return round(self.carousel.get_position())
 
@@ -1147,6 +1164,7 @@ class OnboardingView(Gtk.Box):
         last = self.carousel.get_n_pages() - 1
         self.back_button.set_visible(index > 0)
         self.next_button.set_visible(index < last)
+        self.start_button.set_visible(index == last)
         self.step_label.set_text(f"Schritt {index + 1} von {last + 1}: {self.STEP_TITLES[index]}")
         (self.start_button if index == last else self.next_button).grab_focus()
 

@@ -582,5 +582,39 @@ class GtkWorkflowTests(unittest.TestCase):
                   if isinstance(w, Gtk.Label)]
         self.assertTrue(any(text.startswith("WARNUNG: Timer aus") for text in labels), labels)
 
+    def test_fenster_passen_auf_1024x600(self):
+        logic.save_gui_preferences({"width": 1600, "height": 1000})
+        small = mock.patch.object(RadarWindow, "_screen_size", return_value=(1024, 600))
+        small.start()
+        self.addCleanup(small.stop)
+        with mock.patch("radar_gui_components.TimerController.refresh"):
+            window = RadarWindow(self.app, self.config_path)
+        self.addCleanup(window.close)
+        width, height = window.get_default_size()
+        self.assertLessEqual(width, 1024 - 64)
+        self.assertLessEqual(height, 600 - 64)
+        # Auch die Mindestgröße muss neben Panels und Docks Platz finden.
+        self.assertLessEqual(window.get_size_request()[1], 600 - 64)
+        window.open_settings()
+        self.assertLessEqual(window.settings_window.get_default_size()[1], 600 - 64)
+        window.settings_window.close()
+
+    def test_einfuehrung_haelt_hauptaktion_auf_kleinen_bildschirmen_sichtbar(self):
+        self.window.present()
+        self.window.show_onboarding()
+        view = self.window.onboarding_view
+        view.go_to(2)
+        # Die Hauptaktion liegt in der festen Leiste, nicht im scrollbaren Seiteninhalt.
+        self.assertTrue(view.start_button.get_visible())
+        self.assertFalse(view.start_button.is_ancestor(view.carousel))
+        view.set_layout(compact=True, narrow=True)
+        self.assertTrue(all(page.get_icon_name() is None for page, _icon in view._status_pages))
+        self.assertFalse(view.dots.get_visible())
+        view.set_layout(compact=False, narrow=False)
+        self.assertEqual([page.get_icon_name() for page, _icon in view._status_pages],
+                         [icon for _page, icon in view._status_pages])
+        self.assertTrue(view.dots.get_visible())
+
+
 if __name__ == "__main__":
     unittest.main()

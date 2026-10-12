@@ -100,6 +100,17 @@ Erkannte Lebenszyklusänderungen: 4
             path.write_text("kein JSON", encoding="utf-8")
             self.assertEqual(logic.load_gui_preferences(path), {})
 
+    def test_fenstergroesse_passt_auf_kleine_bildschirme(self):
+        self.assertEqual(logic.fit_window_size(920, 720, (1024, 600)), (920, 536))
+        self.assertEqual(logic.fit_window_size(920, 720, (2560, 1440)), (920, 720))
+        self.assertEqual(logic.fit_window_size(920, 720, None), (920, 720))
+        # Nie kleiner als die Mindestgröße, auch nicht auf winzigen Anzeigen.
+        self.assertEqual(logic.fit_window_size(920, 720, (400, 300)), logic.MIN_WINDOW_SIZE)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "gui-preferences.json"
+            logic.save_gui_preferences({"width": 500, "height": 420}, path)
+            self.assertEqual(logic.load_gui_preferences(path), {"width": 500, "height": 420})
+
     def test_einfuehrungsstand_wird_gespeichert_und_begrenzt(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "gui-preferences.json"

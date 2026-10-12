@@ -45,6 +45,10 @@ from radar_gui_components import (  # noqa: E402
 
 # Erhöhen, wenn sich die Einführung so stark ändert, dass alle sie erneut sehen sollen.
 ONBOARDING_VERSION = 1
+# Unterhalb dieser Höhe (z. B. auf 1024×600) entfallen die großen Symbole der Einführung.
+ONBOARDING_COMPACT_HEIGHT = 600
+# Unterhalb dieser Breite entfallen die Seitenpunkte zugunsten der Schaltflächen.
+ONBOARDING_NARROW_WIDTH = 500
 
 SHORTCUTS = (
     ("Jetzt prüfen", "<Ctrl>r"),
@@ -68,10 +72,13 @@ class RadarWindow(Adw.ApplicationWindow):
         self._timer_status: TimerStatus | None = None
         self._graphics_summary: tuple[str, str] | None = None
         self.preferences = logic.load_gui_preferences()
-        self.set_default_size(
-            self.preferences.get("width", 920), self.preferences.get("height", 720),
-        )
-        self.set_size_request(700, 560)
+        # Gespeicherte Größen stammen evtl. von einem größeren Bildschirm, z. B. vor einem Monitorwechsel.
+        self.set_default_size(*logic.fit_window_size(
+            self.preferences.get("width", logic.DEFAULT_WINDOW_SIZE[0]),
+            self.preferences.get("height", logic.DEFAULT_WINDOW_SIZE[1]),
+            self._screen_size(),
+        ))
+        self.set_size_request(*logic.MIN_WINDOW_SIZE)
 
         header = Adw.HeaderBar()
         header.set_title_widget(Gtk.Label(label="LLM-Modellradar"))
@@ -170,7 +177,7 @@ class RadarWindow(Adw.ApplicationWindow):
 
     def _build_settings_window(self) -> Adw.Window:
         window = Adw.Window(title="Einstellungen", transient_for=self, modal=True)
-        window.set_default_size(780, 680)
+        self._fit_dialog(window, 780, 680)
         window.set_hide_on_close(True)
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header = Adw.HeaderBar()
@@ -198,12 +205,25 @@ class RadarWindow(Adw.ApplicationWindow):
         self.settings_save_button = save_button
         return window
 
+    def _screen_size(self) -> tuple[int, int] | None:
+        """Logische Größe des Bildschirms mit diesem Fenster, vor dem Anzeigen die des größten."""
+        display = self.get_display()
+        surface = self.get_surface()
+        monitor = display.get_monitor_at_surface(surface) if surface is not None else None
+        monitors = [monitor] if monitor is not None else list(display.get_monitors())
+        sizes = [(m.get_geometry().width, m.get_geometry().height) for m in monitors]
+        return max(sizes, key=lambda size: size[0] * size[1]) if sizes else None
+
+    def _fit_dialog(self, window: Gtk.Window, width: int, height: int) -> None:
+        """Hält Fenster ohne eigene Größenanpassung innerhalb kleiner Bildschirme wie 1024×600."""
+        window.set_default_size(*logic.fit_window_size(width, height, self._screen_size(), (360, 300)))
+
     def show_toast(self, text: str) -> None:
         self.toast_overlay.add_toast(Adw.Toast(title=GLib.markup_escape_text(text)))
 
     def _save_preferences(self, *_args) -> bool:
         width, height = self.get_width(), self.get_height()
-        if width < 700 or height < 560:
+        if width < logic.MIN_WINDOW_SIZE[0] or height < logic.MIN_WINDOW_SIZE[1]:
             width, height = self.get_default_size()
         self.preferences.update(width=width, height=height)
         try:
@@ -343,6 +363,9 @@ class RadarWindow(Adw.ApplicationWindow):
             self.diagnostics_page.set_loading()
 
     def open_settings(self, *_args) -> None:
+        if not self.settings_window.get_visible():
+            # Behält eine selbst gewählte Größe, sofern sie auf den aktuellen Bildschirm passt.
+            self._fit_dialog(self.settings_window, *self.settings_window.get_default_size())
         self.settings_window.present()
 
     def load_report(self, announce: bool = True) -> None:
@@ -369,6 +392,24 @@ class RadarWindow(Adw.ApplicationWindow):
         toast.connect("button-clicked", lambda *_: self.open_report())
         self.toast_overlay.add_toast(toast)
 
+    @staticmethod
+    def _add_compact_breakpoint(dialog, view: OnboardingView) -> None:
+        # Breakpoints gibt es ab libadwaita 1.4 (Adw.Window) bzw. 1.5 (Adw.Dialog).
+        if not (hasattr(Adw, "Breakpoint") and hasattr(dialog, "add_breakpoint")):
+            return
+        # Ohne Mindestgröße könnte libadwaita die Breakpoints nicht zuverlässig auswerten.
+        dialog.set_size_request(360, 300)
+        low = f"max-height: {ONBOARDING_COMPACT_HEIGHT}px"
+        narrow = f"max-width: {ONBOARDING_NARROW_WIDTH}px"
+        # libadwaita wendet nur den letzten passenden Breakpoint an, daher auch die Kombination.
+        for condition, compact, is_narrow in (
+            (low, True, False), (narrow, False, True), (f"{low} and {narrow}", True, True),
+        ):
+            breakpoint = Adw.Breakpoint.new(Adw.BreakpointCondition.parse(condition))
+            breakpoint.connect("apply", lambda _bp, c=compact, n=is_narrow: view.set_layout(c, n))
+            breakpoint.connect("unapply", lambda _bp: view.set_layout(False, False))
+            dialog.add_breakpoint(breakpoint)
+
     def maybe_show_onboarding(self) -> None:
         """Startet die Einführung nur, solange die aktuelle Fassung noch nicht gesehen wurde."""
         if self.preferences.get("onboarding_version", 0) < ONBOARDING_VERSION:
@@ -388,10 +429,11 @@ class RadarWindow(Adw.ApplicationWindow):
         if hasattr(Adw, "Dialog"):
             dialog = Adw.Dialog(title="Einführung", content_width=560, content_height=620, child=content)
             dialog.connect("closed", lambda *_: self._onboarding_closed(view))
+            self._add_compact_breakpoint(dialog, view)
             dialog.present(self)
         else:
             dialog = Adw.Window(title="Einführung", transient_for=self, modal=True, content=content)
-            dialog.set_default_size(560, 620)
+            self._fit_dialog(dialog, 560, 620)
             escape = Gtk.ShortcutController()
             escape.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string("Escape"),
@@ -399,6 +441,7 @@ class RadarWindow(Adw.ApplicationWindow):
             ))
             dialog.add_controller(escape)
             dialog.connect("close-request", lambda *_: self._onboarding_closed(view) or False)
+            self._add_compact_breakpoint(dialog, view)
             dialog.present()
         self._onboarding_dialog = dialog
         self.onboarding_view = view
