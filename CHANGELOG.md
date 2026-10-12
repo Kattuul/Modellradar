@@ -13,6 +13,12 @@
 - Hauptmenü mit Untermenü „Weitere Prüfoptionen“, Tastenkürzel-Übersicht
   (`Strg+?`) und „Über Modellradar“. „Gespeicherten Bericht neu laden“ entfällt;
   der Bericht wird beim Start automatisch geladen.
+- Einsteigerfreundliche Einführung beim ersten Start: drei überspringbare
+  Schritte (Was Modellradar tut, erkannte Grafikhardware und Timerzustand,
+  erste Prüfung starten), wiederaufrufbar über „Einführung erneut anzeigen“.
+  Der Stand wird als `onboarding_version` gespeichert; nach der ersten Prüfung
+  führt ein Hinweis zum Bericht. GTK-Tests schreiben ihre GUI-Präferenzen nicht
+  mehr in das echte Benutzerverzeichnis.
 
 - Hardwarebewusste, unprivilegierte GPU-Erkennung in der Systemdiagnose:
   sichtbare DRM-Grafikadapter, Treiber und optionaler dedizierter VRAM; klare

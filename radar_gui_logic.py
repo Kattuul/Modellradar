@@ -93,7 +93,9 @@ def load_gui_preferences(path: Path | None = None) -> dict[str, int]:
     if not isinstance(raw, dict):
         return {}
     result: dict[str, int] = {}
-    for key, lower, upper in (("width", 700, 2400), ("height", 560, 1600)):
+    for key, lower, upper in (
+        ("width", 700, 2400), ("height", 560, 1600), ("onboarding_version", 0, 1000),
+    ):
         value = raw.get(key)
         if isinstance(value, int) and lower <= value <= upper:
             result[key] = value
@@ -101,13 +103,47 @@ def load_gui_preferences(path: Path | None = None) -> dict[str, int]:
 
 
 def save_gui_preferences(values: dict[str, int], path: Path | None = None) -> None:
-    """Speichert die Fenstergröße atomar, nie die Radarkonfiguration."""
+    """Speichert Fenstergröße und Einführungsstand atomar, nie die Radarkonfiguration."""
     target = path or gui_preferences_path()
     safe = {
         key: value for key, value in values.items()
-        if key in {"width", "height"} and isinstance(value, int)
+        if key in {"width", "height", "onboarding_version"} and isinstance(value, int)
     }
     model_radar.atomic_write(target, json.dumps(safe, indent=2) + "\n")
+
+
+def _gib(value: int) -> str:
+    return f"{value / (1024 ** 3):.1f}".replace(".", ",") + " GiB"
+
+
+def graphics_summary(graphics: dict[str, Any]) -> tuple[str, str]:
+    """Beschreibt die sichtbare Grafikhardware in Alltagssprache für Einsteiger."""
+    adapters = [item for item in graphics.get("adapters", []) if isinstance(item, dict)]
+    limitations = [str(item) for item in graphics.get("limitations", []) if item]
+    if not adapters:
+        title = "Keine Grafikkarte erkannt"
+        lines = [
+            "Neue Modelle werden trotzdem gemeldet. Ob sie auf diesen Rechner passen, "
+            "lässt sich ohne Angaben zum Grafikspeicher aber nur grob einschätzen."
+        ]
+    else:
+        lines = []
+        for adapter in adapters:
+            vram = adapter.get("vram_bytes")
+            memory = f"{_gib(vram)} Grafikspeicher" if isinstance(vram, int) and vram > 0 else "Grafikspeicher unbekannt"
+            kind = {"dediziert": "eigene Grafikkarte", "integriert": "im Prozessor eingebaut"}.get(
+                adapter.get("kind"), "Bauart unbekannt",
+            )
+            lines.append(f"{adapter.get('vendor', 'Unbekannter Hersteller')} · {kind} · {memory}")
+        dedicated = [
+            item["vram_bytes"] for item in adapters
+            if item.get("kind") == "dediziert" and isinstance(item.get("vram_bytes"), int) and item["vram_bytes"] > 0
+        ]
+        title = (
+            f"Grafikkarte mit {_gib(max(dedicated))} Grafikspeicher erkannt" if dedicated
+            else "Grafik erkannt, Grafikspeicher unbekannt"
+        )
+    return title, "\n".join(lines + [f"Hinweis: {item}" for item in limitations])
 
 
 def report_summary(report: str) -> dict[str, str]:

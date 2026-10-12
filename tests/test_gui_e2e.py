@@ -9,12 +9,13 @@ try:
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402
+    from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 except (ImportError, ValueError) as exc:
     raise unittest.SkipTest(f"GTK nicht installiert: {exc}") from exc
 
 import model_radar
-from model_radar_gui import RadarWindow
+import radar_gui_logic as logic
+from model_radar_gui import ONBOARDING_VERSION, RadarWindow
 from radar_gui_components import CommandResult, TimerStatus
 
 
@@ -52,6 +53,13 @@ class GtkWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         base = Path(self.directory.name)
+        # GUI-Präferenzen (Fenstergröße, Einführungsstand) nie im echten Home ablegen.
+        state_home = mock.patch.dict("os.environ", {"XDG_STATE_HOME": str(base / "state")})
+        state_home.start()
+        self.addCleanup(state_home.stop)
+        graphics = mock.patch("radar_platform.detect_graphics", return_value={"adapters": [], "limitations": []})
+        graphics.start()
+        self.addCleanup(graphics.stop)
         self.report_path = base / "report.txt"
         self.report_path.write_text("AUTOMATISCH GELADENER BERICHT\n", encoding="utf-8")
         config = model_radar.validate_config(model_radar.load_json(ROOT / "config.json", "Konfiguration"))
@@ -221,7 +229,7 @@ class GtkWorkflowTests(unittest.TestCase):
     def test_hauptansicht_priorisiert_aktionen_und_menu(self):
         page = self.window.actions_page
         self.assertFalse(page.cancel_button.get_visible())
-        for action in ("preferences", "dry-run", "diagnostics", "shortcuts", "about"):
+        for action in ("preferences", "onboarding", "dry-run", "diagnostics", "shortcuts", "about"):
             self.assertIsNotNone(self.window.lookup_action(action))
         self.assertIsNone(self.window.lookup_action("reload-report"))
 
@@ -291,6 +299,69 @@ class GtkWorkflowTests(unittest.TestCase):
             state_path.with_name("state.json.schema-v1.bak").read_bytes(),
             original_state,
         )
+
+
+    @staticmethod
+    def spin_until(condition, seconds=5.0):
+        """Verarbeitet GTK-Ereignisse, bis die Bedingung gilt; robust auch unter Last."""
+        context = GLib.MainContext.default()
+        deadline = GLib.get_monotonic_time() + int(seconds * 1_000_000)
+        while not condition() and GLib.get_monotonic_time() < deadline:
+            context.iteration(False)
+
+    def test_einfuehrung_erscheint_beim_ersten_start_und_ueberspringen_merkt_sich_das(self):
+        self.window.present()
+        self.window.maybe_show_onboarding()
+        view = self.window.onboarding_view
+        self.assertIsNotNone(self.window._onboarding_dialog)
+        self.assertEqual(view.step_label.get_text(), "Schritt 1 von 3: Willkommen")
+        self.assertFalse(view.back_button.get_visible())
+
+        view.skip_button.emit("clicked")
+        self.assertIsNone(self.window._onboarding_dialog)
+        self.assertIsNone(self.runner.command)
+        self.assertEqual(logic.load_gui_preferences().get("onboarding_version"), ONBOARDING_VERSION)
+
+        # Wer die Einführung kennt, sieht sie beim nächsten Start nicht erneut.
+        self.window.maybe_show_onboarding()
+        self.assertIsNone(self.window._onboarding_dialog)
+
+    def test_einfuehrung_fuehrt_zur_ersten_pruefung(self):
+        self.window.present()
+        self.window.lookup_action("onboarding").activate(None)
+        view = self.window.onboarding_view
+        view.go_to(2)
+        self.assertEqual(view.step_label.get_text(), "Schritt 3 von 3: Los geht’s")
+        self.assertFalse(view.next_button.get_visible())
+        view.start_button.emit("clicked")
+        self.assertIn("--force", self.runner.command)
+        self.assertIsNone(self.window._onboarding_dialog)
+
+    def test_einfuehrung_zeigt_echten_timerzustand_und_hardware(self):
+        self.window.present()
+        self.window.show_onboarding()
+        view = self.window.onboarding_view
+        self.window.apply_timer_status(TimerStatus("enabled", "active"))
+        self.assertEqual(view.timer_row.get_title(), "Automatische Prüfungen sind eingeschaltet")
+        self.window.apply_timer_status(TimerStatus("", "", error="Kein Benutzerdienst"))
+        self.assertIn("nicht verfügbar", view.timer_row.get_title())
+        self.spin_until(lambda: view.hardware_row.get_title() != "Grafikkarte wird ermittelt …")
+        self.assertEqual(view.hardware_row.get_title(), "Keine Grafikkarte erkannt")
+
+    def test_erste_pruefung_zeigt_hinweis_auf_bericht(self):
+        self.window.close()
+        self.report_path.unlink()
+        with mock.patch("radar_gui_components.TimerController.refresh"):
+            self.window = RadarWindow(self.app, self.config_path)
+        self.window.command_runner = self.runner
+        self.window.run_radar("force")
+        self.report_path.write_text("ERSTER BERICHT\n", encoding="utf-8")
+        with mock.patch.object(self.window, "_announce_first_report") as announce, \
+                mock.patch.object(self.window, "show_toast") as toast:
+            self.runner.callback(CommandResult(0, "ok"))
+        announce.assert_called_once()
+        toast.assert_not_called()
+        self.assertEqual(self.output_text(self.window), "ERSTER BERICHT\n")
 
 
 if __name__ == "__main__":

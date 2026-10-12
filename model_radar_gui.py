@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import threading
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -14,7 +15,7 @@ try:
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402
+    from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 except (ImportError, ValueError) as exc:
     print(
         "GUI-Abhängigkeiten fehlen: Python/PyGObject, GTK 4 und libadwaita werden benötigt.\n"
@@ -26,14 +27,19 @@ except (ImportError, ValueError) as exc:
 
 import model_radar  # noqa: E402
 import radar_gui_logic as logic  # noqa: E402
+import radar_platform  # noqa: E402
 from radar_gui_components import (  # noqa: E402
     ActionsPage,
     CommandResult,
     CommandRunner,
+    OnboardingView,
     SettingsPage,
     TimerController,
     TimerStatus,
 )
+
+# Erhöhen, wenn sich die Einführung so stark ändert, dass alle sie erneut sehen sollen.
+ONBOARDING_VERSION = 1
 
 SHORTCUTS = (
     ("Jetzt prüfen", "<Ctrl>r"),
@@ -53,6 +59,8 @@ class RadarWindow(Adw.ApplicationWindow):
         self.command_runner = CommandRunner()
         self.timer_controller = TimerController()
         self._busy = False
+        self._onboarding_dialog = None
+        self._timer_status: TimerStatus | None = None
         self.preferences = logic.load_gui_preferences()
         self.set_default_size(
             self.preferences.get("width", 920), self.preferences.get("height", 720),
@@ -65,6 +73,7 @@ class RadarWindow(Adw.ApplicationWindow):
         self.main_menu = Gio.Menu()
         primary = Gio.Menu()
         primary.append("Einstellungen", "win.preferences")
+        primary.append("Einführung erneut anzeigen", "win.onboarding")
         more_checks = Gio.Menu()
         more_checks.append("Vorschau ohne Änderungen", "win.dry-run")
         primary.append_submenu("Weitere Prüfoptionen", more_checks)
@@ -119,6 +128,7 @@ class RadarWindow(Adw.ApplicationWindow):
             ("diagnostics", self.show_diagnostics, ()),
             ("shortcuts", self.show_shortcuts, ("<Ctrl>question",)),
             ("about", self.show_about, ()),
+            ("onboarding", lambda *_: self.show_onboarding(), ()),
         ):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
@@ -208,10 +218,14 @@ class RadarWindow(Adw.ApplicationWindow):
     def run_radar(self, mode: str) -> None:
         arguments = ("--dry-run",) if mode == "dry" else ("--force",)
         label = "Vorschau läuft …" if mode == "dry" else "Prüfung läuft …"
+        first_check = not self.actions_page.report_text
+
         def finished(result: CommandResult) -> None:
             self.refresh_check_status()
             if mode == "force" and result.returncode == 0 and not result.cancelled:
-                self.load_report()
+                self.load_report(announce=not first_check)
+                if first_check:
+                    self._announce_first_report()
 
         self.run_command(logic.radar_command(self.config_path, *arguments), label, finished)
 
@@ -259,14 +273,94 @@ class RadarWindow(Adw.ApplicationWindow):
         except (model_radar.RadarError, OSError) as exc:
             self.actions_page.set_error("Bericht kann nicht geladen werden.", str(exc))
 
+    def _announce_first_report(self) -> None:
+        """Zeigt Einsteigern nach der ersten Prüfung, wo das Ergebnis steht."""
+        toast = Adw.Toast(title="Erste Prüfung abgeschlossen", button_label="Bericht ansehen", timeout=8)
+        toast.connect("button-clicked", lambda *_: self.actions_page.output_view.grab_focus())
+        self.toast_overlay.add_toast(toast)
+
+    def maybe_show_onboarding(self) -> None:
+        """Startet die Einführung nur, solange die aktuelle Fassung noch nicht gesehen wurde."""
+        if self.preferences.get("onboarding_version", 0) < ONBOARDING_VERSION:
+            self.show_onboarding()
+
+    def show_onboarding(self) -> None:
+        if self._onboarding_dialog is not None:
+            return  # Bereits geöffnet und modal.
+        view = OnboardingView(lambda start_check: self._finish_onboarding(start_check))
+        header = Adw.HeaderBar(show_end_title_buttons=True)
+        header.pack_start(view.skip_button)
+        header.set_title_widget(view.step_label)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        content.append(header)
+        content.append(view)
+        # Adw.Dialog gibt es erst ab libadwaita 1.5; ältere Systeme erhalten ein modales Fenster.
+        if hasattr(Adw, "Dialog"):
+            dialog = Adw.Dialog(title="Einführung", content_width=560, content_height=620, child=content)
+            dialog.connect("closed", lambda *_: self._onboarding_closed(view))
+            dialog.present(self)
+        else:
+            dialog = Adw.Window(title="Einführung", transient_for=self, modal=True, content=content)
+            dialog.set_default_size(560, 620)
+            escape = Gtk.ShortcutController()
+            escape.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string("Escape"),
+                Gtk.CallbackAction.new(lambda *_: dialog.close() or True),
+            ))
+            dialog.add_controller(escape)
+            dialog.connect("close-request", lambda *_: self._onboarding_closed(view) or False)
+            dialog.present()
+        self._onboarding_dialog = dialog
+        self.onboarding_view = view
+        self._sync_onboarding_timer()
+        self._detect_graphics(view)
+
+    def _sync_onboarding_timer(self) -> None:
+        status = self._timer_status
+        if self._onboarding_dialog is not None and status is not None:
+            self.onboarding_view.set_timer_state(
+                enabled=not status.error and status.enabled == "enabled",
+                available=not status.error,
+            )
+
+    def _detect_graphics(self, view: OnboardingView) -> None:
+        """Liest die Grafikhardware im Hintergrund, weil nvidia-smi einige Sekunden brauchen kann."""
+        def worker() -> None:
+            try:
+                summary = logic.graphics_summary(radar_platform.detect_graphics())
+            except Exception as exc:  # Die Einführung darf an der Hardwareerkennung nie scheitern.
+                summary = ("Grafikkarte nicht ermittelbar", f"Hinweis: {exc}")
+            GLib.idle_add(lambda: view.set_hardware(*summary) or GLib.SOURCE_REMOVE)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _onboarding_closed(self, view: OnboardingView) -> None:
+        self._onboarding_dialog = None
+        view.finish(False)
+
+    def _finish_onboarding(self, start_check: bool) -> None:
+        """Merkt sich die Einführung sofort, damit sie auch nach einem Absturz nicht erneut erscheint."""
+        dialog, self._onboarding_dialog = self._onboarding_dialog, None
+        if dialog is not None:
+            dialog.close()
+        self.preferences["onboarding_version"] = ONBOARDING_VERSION
+        try:
+            logic.save_gui_preferences(self.preferences)
+        except OSError:
+            pass
+        if start_check:
+            self.run_radar("force")
+
     def refresh_timer_status(self) -> None:
         self.timer_controller.refresh(self.apply_timer_status)
 
     def apply_timer_status(self, status: TimerStatus) -> None:
+        self._timer_status = status
         self.actions_page.set_timer_status(status)
         if self.banner is not None:
             self.banner.set_title(f"Automatische Prüfungen nicht verfügbar: {status.error}" if status.error else "")
             self.banner.set_revealed(bool(status.error))
+        self._sync_onboarding_timer()
 
     def refresh_check_status(self) -> None:
         try:
@@ -394,6 +488,8 @@ class RadarApplication(Adw.Application):
                     )
                 )
         window.present()
+        if isinstance(window, RadarWindow):
+            window.maybe_show_onboarding()
 
 
 def parse_args() -> argparse.Namespace:

@@ -100,6 +100,30 @@ Erkannte Lebenszyklusänderungen: 4
             path.write_text("kein JSON", encoding="utf-8")
             self.assertEqual(logic.load_gui_preferences(path), {})
 
+    def test_einfuehrungsstand_wird_gespeichert_und_begrenzt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "gui-preferences.json"
+            logic.save_gui_preferences({"width": 1000, "onboarding_version": 1}, path)
+            self.assertEqual(logic.load_gui_preferences(path), {"width": 1000, "onboarding_version": 1})
+            path.write_text('{"onboarding_version": -3}', encoding="utf-8")
+            self.assertEqual(logic.load_gui_preferences(path), {})
+
+    def test_grafikzusammenfassung_in_alltagssprache(self):
+        title, detail = logic.graphics_summary({"adapters": [], "limitations": ["Flatpak-Sandbox"]})
+        self.assertEqual(title, "Keine Grafikkarte erkannt")
+        self.assertIn("Hinweis: Flatpak-Sandbox", detail)
+
+        title, detail = logic.graphics_summary({"adapters": [
+            {"vendor": "Intel", "kind": "integriert", "vram_bytes": None},
+            {"vendor": "NVIDIA", "kind": "dediziert", "vram_bytes": 12 * 1024 ** 3},
+        ]})
+        self.assertEqual(title, "Grafikkarte mit 12,0 GiB Grafikspeicher erkannt")
+        self.assertEqual(detail, "Intel · im Prozessor eingebaut · Grafikspeicher unbekannt\n"
+                                 "NVIDIA · eigene Grafikkarte · 12,0 GiB Grafikspeicher")
+
+        title, _detail = logic.graphics_summary({"adapters": [{"vendor": "Intel", "kind": "integriert"}]})
+        self.assertEqual(title, "Grafik erkannt, Grafikspeicher unbekannt")
+
 
 if __name__ == "__main__":
     unittest.main()

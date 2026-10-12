@@ -668,3 +668,166 @@ class ActionsPage(Gtk.Box):
         self.copy_diagnostic_button.set_sensitive(True)
         self.copy_diagnostic_button.set_visible(True)
         self.set_output(self.diagnostic_text)
+
+
+class OnboardingView(Gtk.Box):
+    """Kurze, jederzeit überspringbare Einführung in drei Schritten.
+
+    Der Inhalt ist bewusst unabhängig vom umgebenden Dialog, damit er unter
+    neuen (Adw.Dialog) und älteren libadwaita-Versionen (Adw.Window) gleich
+    funktioniert und sich ohne Fenster testen lässt.
+    """
+
+    STEP_TITLES = ("Willkommen", "Dieser Rechner", "Los geht’s")
+
+    def __init__(self, on_finish: Callable[[bool], None]):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self._on_finish = on_finish
+        self._finished = False
+
+        self.carousel = Adw.Carousel(vexpand=True, allow_scroll_wheel=False)
+        self.carousel.append(self._welcome_page())
+        self.carousel.append(self._hardware_page())
+        self.carousel.append(self._start_page())
+        self.carousel.connect("page-changed", lambda *_: self._update_navigation())
+        self.append(self.carousel)
+
+        navigation = Gtk.CenterBox(margin_top=6, margin_bottom=18, margin_start=18, margin_end=18)
+        self.back_button = Gtk.Button(label="Zurück")
+        self.back_button.connect("clicked", lambda *_: self.go_to(self.position() - 1))
+        self.next_button = Gtk.Button(label="Weiter")
+        self.next_button.add_css_class("suggested-action")
+        self.next_button.connect("clicked", lambda *_: self.go_to(self.position() + 1))
+        navigation.set_start_widget(self.back_button)
+        navigation.set_center_widget(Adw.CarouselIndicatorDots(carousel=self.carousel))
+        navigation.set_end_widget(self.next_button)
+        self.append(navigation)
+
+        self.step_label = Gtk.Label()
+        self.step_label.add_css_class("dim-label")
+        self.skip_button = Gtk.Button(label="Überspringen")
+        self.skip_button.set_tooltip_text("Schließt die Einführung. Sie bleibt über das Hauptmenü erreichbar.")
+        self.skip_button.connect("clicked", lambda *_: self.finish(False))
+        self._update_navigation()
+
+    @staticmethod
+    def _page(icon: str, title: str, description: str, *children: Gtk.Widget) -> Gtk.Widget:
+        # Adw.StatusPage scrollt selbst; das hält auch kleine Bildschirme bedienbar.
+        page = Adw.StatusPage(
+            icon_name=icon, title=title, description=description, hexpand=True, vexpand=True,
+        )
+        page.add_css_class("compact")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        for child in children:
+            box.append(child)
+        page.set_child(Adw.Clamp(maximum_size=480, child=box))
+        return page
+
+    @staticmethod
+    def _fact_list(*facts: tuple[str, str, str]) -> tuple[Gtk.ListBox, list[Adw.ActionRow]]:
+        listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        listbox.add_css_class("boxed-list")
+        rows = []
+        for icon, title, subtitle in facts:
+            row = Adw.ActionRow(title=title, subtitle=subtitle, subtitle_lines=0)
+            row.add_prefix(Gtk.Image(icon_name=icon, accessible_role=Gtk.AccessibleRole.PRESENTATION))
+            listbox.append(row)
+            rows.append(row)
+        return listbox, rows
+
+    def _welcome_page(self) -> Gtk.Widget:
+        facts, _rows = self._fact_list(
+            ("folder-download-symbolic", "Lädt keine Modelle herunter",
+             "Gelesen werden nur öffentliche Steckbriefe der Modelle (Metadaten), "
+             "zum Beispiel Name, Größe und Änderungsdatum."),
+            ("system-run-symbolic", "Führt nichts aus",
+             "Auf diesem Rechner wird kein Modell installiert oder gestartet."),
+            ("object-select-symbolic", "Fragt nur ausgewählte Quellen ab",
+             "Welche Herausgeber berücksichtigt werden, lässt sich später in den Einstellungen ändern."),
+        )
+        return self._page(
+            "system-search-symbolic", "Willkommen bei Modellradar",
+            "Modellradar zeigt, welche KI-Sprachmodelle neu erschienen sind oder aktualisiert wurden – "
+            "ohne dass man dafür selbst Webseiten durchsuchen muss.",
+            facts,
+        )
+
+    def _hardware_page(self) -> Gtk.Widget:
+        facts, rows = self._fact_list(
+            ("video-display-symbolic", "Grafikkarte wird ermittelt …",
+             "Das dauert nur einen Moment."),
+            ("alarm-symbolic", "Automatische Prüfungen", "Status wird geladen …"),
+        )
+        self.hardware_row, self.timer_row = rows
+        return self._page(
+            "computer-symbolic", "Dieser Rechner",
+            "Ob ein Modell hier laufen könnte, hängt vor allem vom Grafikspeicher (VRAM) "
+            "der Grafikkarte ab. Diese Angabe wird nur lokal gelesen und nicht übertragen.",
+            facts,
+        )
+
+    def _start_page(self) -> Gtk.Widget:
+        steps, _rows = self._fact_list(
+            ("media-playback-start-symbolic", "1. „Jetzt prüfen“ wählen",
+             "Modellradar fragt die Modellquellen ab. Dafür wird eine Internetverbindung benötigt."),
+            ("x-office-document-symbolic", "2. Ergebnis lesen",
+             "Neue und geänderte Modelle erscheinen im Hauptfenster unter „Letztes Ergebnis“."),
+            ("computer-symbolic", "3. Optional: „Hardware-Eignung“",
+             "Zeigt, welche Modelldateien voraussichtlich in den Grafikspeicher passen."),
+        )
+        self.start_button = Gtk.Button(label="Erste Prüfung starten", halign=Gtk.Align.CENTER)
+        self.start_button.add_css_class("suggested-action")
+        self.start_button.add_css_class("pill")
+        self.start_button.connect("clicked", lambda *_: self.finish(True))
+        self.look_around_button = Gtk.Button(label="Erst einmal umsehen", halign=Gtk.Align.CENTER)
+        self.look_around_button.add_css_class("flat")
+        self.look_around_button.connect("clicked", lambda *_: self.finish(False))
+        return self._page(
+            "media-playback-start-symbolic", "So geht es los",
+            "Drei Schritte genügen für den Einstieg. Diese Einführung lässt sich "
+            "jederzeit über das Hauptmenü (☰) erneut öffnen.",
+            steps, self.start_button, self.look_around_button,
+        )
+
+    def set_hardware(self, title: str, detail: str) -> None:
+        self.hardware_row.set_title(title)
+        self.hardware_row.set_subtitle(detail)
+
+    def set_timer_state(self, enabled: bool, available: bool) -> None:
+        """Beschreibt den tatsächlichen Timerzustand, auch beim erneuten Aufruf."""
+        if not available:
+            title = "Automatische Prüfungen sind hier nicht verfügbar"
+            subtitle = "Prüfungen lassen sich trotzdem jederzeit mit „Jetzt prüfen“ starten."
+        elif enabled:
+            title = "Automatische Prüfungen sind eingeschaltet"
+            subtitle = ("Modellradar prüft regelmäßig im Hintergrund. "
+                        "Das lässt sich im Hauptfenster jederzeit ausschalten.")
+        else:
+            title = "Automatische Prüfungen sind ausgeschaltet"
+            subtitle = ("Geprüft wird nur, wenn „Jetzt prüfen“ gewählt wird. Regelmäßige Prüfungen im "
+                        "Hintergrund lassen sich im Hauptfenster einschalten – Modellradar fragt vorher nach.")
+        self.timer_row.set_title(title)
+        self.timer_row.set_subtitle(subtitle)
+
+    def position(self) -> int:
+        return round(self.carousel.get_position())
+
+    def go_to(self, index: int) -> None:
+        index = max(0, min(index, self.carousel.get_n_pages() - 1))
+        self.carousel.scroll_to(self.carousel.get_nth_page(index), True)
+        self._update_navigation(index)
+
+    def _update_navigation(self, index: int | None = None) -> None:
+        index = self.position() if index is None else index
+        last = self.carousel.get_n_pages() - 1
+        self.back_button.set_visible(index > 0)
+        self.next_button.set_visible(index < last)
+        self.step_label.set_text(f"Schritt {index + 1} von {last + 1}: {self.STEP_TITLES[index]}")
+        (self.start_button if index == last else self.next_button).grab_focus()
+
+    def finish(self, start_check: bool) -> None:
+        """Meldet das Ende genau einmal – egal ob per Button, Überspringen oder Schließen."""
+        if self._finished:
+            return
+        self._finished = True
+        self._on_finish(start_check)

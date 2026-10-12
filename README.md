@@ -127,7 +127,8 @@ Laufzeit mit.
 Die GUI bearbeitet sämtliche Konfigurationsfelder, zeigt den gespeicherten
 Bericht an und priorisiert in der Hauptansicht die sofortige Prüfung, die
 Hardware-Eignung sowie den Schalter **Automatische Prüfungen**, der den Timer
-ein- und ausschaltet. Das Hauptmenü enthält Einstellungen, das Untermenü
+ein- und ausschaltet. Das Hauptmenü enthält Einstellungen, „Einführung erneut
+anzeigen“, das Untermenü
 „Weitere Prüfoptionen“ mit **Vorschau ohne Änderungen**, die Dienstdiagnose,
 eine Übersicht der Tastenkürzel und „Über Modellradar“. Der gespeicherte Bericht
 wird beim Start und nach jeder erfolgreichen Prüfung automatisch geladen.
@@ -148,15 +149,24 @@ Passende Aktionen erlauben direkt das Aktivieren des Timers, den Wechsel zur
 Konfiguration, eine erneute Prüfung oder das Wiederholen der Diagnose. Befehle
 werden immer als Argumentliste ohne Shell gestartet.
 
-Beim ersten Aufruf erklärt ein Leerzustand den nächsten sicheren Schritt. Das
+Beim ersten Start führt eine kurze, jederzeit überspringbare Einführung in drei
+Schritten in Alltagssprache durch die Anwendung: was Modellradar tut (und
+dass es keine Modelle herunterlädt oder ausführt), welche Grafikkarte und wie
+viel Grafikspeicher lokal erkannt wurden, ob automatische Prüfungen laufen, und
+wie die erste Prüfung gestartet wird. Die Hardwareerkennung läuft dabei im
+Hintergrund und wird nicht übertragen. Nach der ersten erfolgreichen Prüfung
+weist ein Hinweis auf den Bericht. Der Einführungsstand wird als
+`onboarding_version` neben der Fenstergröße gespeichert, sodass spätere größere
+Neuerungen gezielt erneut vorgestellt werden können. Solange noch kein Bericht
+existiert, erklärt ein Leerzustand den nächsten sicheren Schritt. Das
 Einschalten automatischer Prüfungen verlangt eine Bestätigung, weil es regelmäßige
 Netzwerkprüfungen startet. Kurze Erfolgsmeldungen erscheinen als
 vorübergehende Hinweise; ist der systemd-Benutzerdienst nicht erreichbar, weist
 ein dauerhaftes Banner mit Sprung zur Diagnose darauf hin. Fehlermeldungen
 bleiben kurz; technische Details sind bei Bedarf aufklappbar. `Strg+,` öffnet
 die Einstellungen, `Strg+S` speichert sie, `Strg+R` startet eine Prüfung und
-`Strg+?` zeigt alle Tastenkürzel. Die Fenstergröße wird lokal
-als reine Darstellungspräferenz gespeichert.
+`Strg+?` zeigt alle Tastenkürzel. Fenstergröße und Einführungsstand werden lokal
+als reine Darstellungspräferenzen gespeichert.
 
 Neben dem nächsten täglichen Timerstart zeigt die Oberfläche den letzten
 erfolgreichen API-Lauf und die aus `check_interval_days` berechnete tatsächliche
