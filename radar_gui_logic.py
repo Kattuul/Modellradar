@@ -158,6 +158,11 @@ def radar_command(config_path: Path, *arguments: str) -> list[str]:
     return radar_platform.python_command(script.name, "--config", str(config_path), *arguments)
 
 
+def recommendations_command(config_path: Path) -> list[str]:
+    """Startet ausschließlich die explizit angeforderte Metadatenbewertung."""
+    return radar_command(config_path, "--recommendations")
+
+
 def _format_utc(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
 

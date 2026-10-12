@@ -54,7 +54,7 @@ if [ "$HEADLESS" -eq 0 ]; then
     }
 fi
 
-SOURCE_FILES=(model_radar.py model_radar_diagnostics.py radar_platform.py
+SOURCE_FILES=(model_radar.py model_recommendations.py model_radar_diagnostics.py radar_platform.py
     config.json config.json.license qwen35-model-radar.service qwen35-model-radar.timer
     LICENSE LICENSING.md THIRD_PARTY_NOTICES.md)
 if [ "$HEADLESS" -eq 0 ]; then
@@ -78,7 +78,7 @@ install -d -m 700 "$CONFIG_DIR"
 install -m 755 \
     "$SOURCE_DIR/model_radar.py" \
     "$SOURCE_DIR/model_radar_diagnostics.py" "$APP_DIR/"
-install -m 644 "$SOURCE_DIR/radar_platform.py" "$APP_DIR/"
+install -m 644 "$SOURCE_DIR/model_recommendations.py" "$SOURCE_DIR/radar_platform.py" "$APP_DIR/"
 install -m 644 "$SOURCE_DIR/LICENSE" "$SOURCE_DIR/LICENSING.md" "$SOURCE_DIR/THIRD_PARTY_NOTICES.md" "$SOURCE_DIR/config.json.license" "$APP_DIR/"
 ln -sfn "$APP_DIR/model_radar.py" "$BIN_DIR/qwen35-model-radar"
 if [ "$HEADLESS" -eq 0 ]; then

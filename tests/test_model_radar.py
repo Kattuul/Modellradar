@@ -29,6 +29,44 @@ class ModelRadarTests(unittest.TestCase):
         self.assertTrue(any("27B außerhalb" in item for item in rejected))
         self.assertTrue(any("Herausgeber nicht freigegeben" in item for item in rejected))
 
+    def test_recommendation_bericht_bleibt_bei_testdaten_lokal(self):
+        graphics = {"adapters": [{"kind": "dediziert", "vram_bytes": 8 * 1024 ** 3}]}
+        models = [{
+            "id": "ggml-org/gemma-4-9b-it-GGUF",
+            "tags": ["gguf"],
+            "gguf": {"total": 9_000_000_000},
+            "siblings": [{"rfilename": "gemma.Q4_K_M.gguf", "size": 4 * 1024 ** 3}],
+        }]
+        with mock.patch("model_radar.radar_platform.detect_graphics", return_value=graphics):
+            with mock.patch("model_radar.load_json", return_value=models):
+                report = radar.recommendation_report(CONFIG, fixture_path=ROOT / "test.json")
+        self.assertIn("[GUT PASSEND] ggml-org/gemma-4-9b-it-GGUF", report)
+        self.assertIn("modelle werden weder heruntergeladen", report.lower())
+
+    def test_dateimetadaten_beschraenken_sich_auf_freigegebene_herausgeber(self):
+        with self.assertRaisesRegex(radar.RadarError, "freigegebene Herausgeber"):
+            radar.fetch_model_metadata("fremd/Modell", CONFIG)
+
+    def test_dateimetadaten_nutzen_blob_abfrage_ohne_token(self):
+        class Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, *_args):
+                return b'{"id": "ggml-org/gemma-4-9b-it-GGUF", "siblings": []}'
+
+        with mock.patch("urllib.request.urlopen", return_value=Response()) as opener:
+            data = radar.fetch_model_metadata("ggml-org/gemma-4-9b-it-GGUF", CONFIG)
+        self.assertEqual(data["id"], "ggml-org/gemma-4-9b-it-GGUF")
+        request = opener.call_args.args[0]
+        self.assertIn("?blobs=true", request.full_url)
+        self.assertIsNone(request.get_header("Authorization"))
+
     def test_neu_aktualisiert_und_unveraendert(self):
         initial, _ = radar.select_candidates(self.fixture("scan_initial.json"), CONFIG)
         state = radar.updated_state(initial, {"repositories": {}}, "2026-09-02T00:00:00+00:00")

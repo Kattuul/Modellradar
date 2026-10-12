@@ -288,7 +288,7 @@ class ActionsPage(Gtk.Box):
     """Bedienseite für Prüfungen, Berichtsausgabe und Timersteuerung."""
 
     def __init__(
-        self, on_dry_run, on_force_run, on_cancel, on_load_report,
+        self, on_dry_run, on_force_run, on_cancel, on_load_report, on_recommendations,
         on_enable_timer, on_disable_timer, on_diagnostics, on_open_settings,
     ):
         super().__init__(
@@ -315,7 +315,12 @@ class ActionsPage(Gtk.Box):
         self.report_button = Gtk.Button(label="Gespeicherten Bericht laden")
         self.report_button.set_tooltip_text("Lädt den zuletzt erfolgreich gespeicherten Bericht.")
         self.report_button.connect("clicked", on_load_report)
-        for button in (self.dry_button, self.run_button, self.cancel_button, self.report_button):
+        self.recommendations_button = Gtk.Button(label="Hardware-Eignung")
+        self.recommendations_button.set_tooltip_text(
+            "Vergleicht sichtbaren VRAM mit öffentlichen GGUF-Dateimetadaten. Lädt keine Modelle herunter."
+        )
+        self.recommendations_button.connect("clicked", on_recommendations)
+        for button in (self.dry_button, self.run_button, self.cancel_button, self.report_button, self.recommendations_button):
             button_box.append(button)
         self.append(button_box)
 
@@ -426,7 +431,7 @@ class ActionsPage(Gtk.Box):
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
         for button in (
-            self.dry_button, self.run_button, self.report_button, self.enable_button,
+            self.dry_button, self.run_button, self.report_button, self.recommendations_button, self.enable_button,
             self.disable_button, self.diagnostic_button,
             *self.diagnostic_action_buttons.values(),
         ):

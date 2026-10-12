@@ -107,7 +107,7 @@ class HeadlessInstallationTests(unittest.TestCase):
             self.assertIn("Manuelle Prüfungen", result.stdout)
             app = base / "home/.local/share/qwen35-model-radar/app"
             self.assertEqual({p.name for p in app.glob("*.py")}, {
-                "model_radar.py", "model_radar_diagnostics.py", "radar_platform.py",
+                "model_radar.py", "model_recommendations.py", "model_radar_diagnostics.py", "radar_platform.py",
             })
             self.assertFalse((base / "home/.local/share/applications").exists())
             result = subprocess.run([

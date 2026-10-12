@@ -19,7 +19,7 @@ APP_ID = "io.github.Kattuul.Modellradar"
 RUNTIME = "org.gnome.Platform"
 BRANCH = "49"
 LICENSE_FILES = ("LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md")
-FILES = ("model_radar.py", "model_radar_gui.py", "model_radar_diagnostics.py",
+FILES = ("model_radar.py", "model_recommendations.py", "model_radar_gui.py", "model_radar_diagnostics.py",
          "radar_gui_logic.py", "radar_gui_components.py", "radar_platform.py", "config.json", "config.json.license")
 PERMISSIONS = ("--share=network", "--share=ipc", "--socket=wayland",
                "--socket=fallback-x11", "--device=dri")

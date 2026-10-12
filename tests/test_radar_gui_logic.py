@@ -32,6 +32,11 @@ class RadarGuiLogicTests(unittest.TestCase):
             sys.executable, str(expected_script), "--config", str(config_path), "--force",
         ])
 
+    def test_hardware_eignung_verwendet_denselben_lokalen_cli(self):
+        command = logic.recommendations_command(Path("/tmp/config.json"))
+        self.assertEqual(Path(command[1]).name, "model_radar.py")
+        self.assertEqual(command[-1], "--recommendations")
+
     def test_config_wird_atomar_gespeichert(self):
         config = model_radar.load_json(ROOT / "config.json", "Konfiguration")
         with tempfile.TemporaryDirectory() as directory:

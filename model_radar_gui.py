@@ -65,6 +65,7 @@ class RadarWindow(Adw.ApplicationWindow):
             lambda *_: self.run_radar("force"),
             self.cancel_run,
             self.load_report,
+            self.show_recommendations,
             lambda *_: self.set_timer(True),
             lambda *_: self.set_timer(False),
             self.show_diagnostics,
@@ -158,6 +159,14 @@ class RadarWindow(Adw.ApplicationWindow):
     def cancel_run(self, _button=None) -> None:
         self.command_runner.cancel()
         self.actions_page.set_status("Abbruch angefordert …")
+
+    def show_recommendations(self, _button=None) -> None:
+        if not self.on_save():
+            return
+        self.run_command(
+            logic.recommendations_command(self.config_path),
+            "Hardware-Eignung wird anhand öffentlicher Metadaten berechnet …",
+        )
 
     def show_diagnostics(self, _button=None) -> None:
         def finished(result: CommandResult) -> None:

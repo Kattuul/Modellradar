@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import radar_platform
+import model_recommendations
 
 VERSION = "2.6.0"
 CONFIG_SCHEMA_VERSION = 2
@@ -372,6 +373,56 @@ def fetch_models(config: dict[str, Any]) -> list[dict[str, Any]]:
                     "max_pages_per_query erhöhen, damit kein unvollständiger Zustand gespeichert wird."
                 )
     return list(found.values())
+
+
+def fetch_model_metadata(repo_id: str, config: dict[str, Any]) -> dict[str, Any]:
+    """Lädt nur öffentliche Dateimetadaten eines explizit erlaubten Repos."""
+    if "/" not in repo_id:
+        raise RadarError("Ungültige Repository-ID für Metadaten.")
+    publisher, _name = repo_id.split("/", 1)
+    if publisher not in config["publishers"]:
+        raise RadarError("Metadaten nur für freigegebene Herausgeber erlaubt.")
+    url = config["api_url"].rstrip("/") + "/" + urllib.parse.quote(repo_id, safe="/") + "?blobs=true"
+    retries = int(config.get("request_retries", 3))
+    for attempt in range(retries):
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=float(config.get("request_timeout_seconds", 20))) as response:
+                payload = json.load(response)
+                if not isinstance(payload, dict):
+                    raise RadarError("Die Hugging-Face-Metadaten enthalten kein JSON-Objekt.")
+                returned_id = payload.get("id") or payload.get("modelId")
+                if returned_id != repo_id:
+                    raise RadarError("Die Hugging-Face-Metadaten gehören nicht zum angefragten Repository.")
+                return payload
+        except urllib.error.HTTPError as exc:
+            retryable = exc.code == 429 or 500 <= exc.code <= 599
+            if not retryable or attempt + 1 == retries:
+                detail = "Rate Limit" if exc.code == 429 else f"HTTP {exc.code}"
+                raise RadarError(f"Hugging-Face-Metadaten nicht erreichbar: {detail}.") from exc
+            time.sleep(retry_delay(exc, attempt, float(config.get("retry_backoff_seconds", 2))))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            if attempt + 1 == retries:
+                raise RadarError(f"Hugging-Face-Metadaten nicht erreichbar: {exc}") from exc
+            time.sleep(float(config.get("retry_backoff_seconds", 2)) * (2**attempt))
+    raise AssertionError("Unerreichbarer Code")
+
+
+def recommendation_report(config: dict[str, Any], *, fixture_path: Path | None = None) -> str:
+    """Erstellt eine rein lesende, ausdrücklich angeforderte Hardwarebewertung."""
+    if fixture_path:
+        listed = load_json(fixture_path, "Testdaten")
+        if not isinstance(listed, list):
+            raise RadarError("Testdaten müssen ein JSON-Array sein.")
+    else:
+        listed = fetch_models(config)
+    candidates, _rejected = select_candidates(listed, config)
+    selected_ids = {candidate.repo_id for candidate in candidates}
+    if fixture_path:
+        models = [item for item in listed if str(item.get("id") or item.get("modelId")) in selected_ids]
+    else:
+        models = [fetch_model_metadata(candidate.repo_id, config) for candidate in candidates]
+    return model_recommendations.render_report(models, radar_platform.detect_graphics())
 
 
 def family_for(name: str, allowed: Iterable[str], config: dict[str, Any]) -> str | None:
@@ -782,6 +833,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--report", type=Path, help="Berichtspfad überschreiben")
     parser.add_argument("--fixture", type=Path, help="lokale API-Testantwort statt Netzwerk verwenden")
     parser.add_argument("--dry-run", action="store_true", help="Zustand/Bericht nicht schreiben und nicht benachrichtigen")
+    parser.add_argument("--recommendations", action="store_true", help="GGUF-Metadaten gegen sichtbaren VRAM bewerten; keine Downloads")
     parser.add_argument("--no-notify", action="store_true", help="Benachrichtigung für diesen Lauf unterdrücken")
     parser.add_argument("--headless", action="store_true", help="Ohne Desktop, GTK oder Benachrichtigungen ausführen")
     parser.add_argument("--force", action="store_true", help="Prüfintervall einmalig ignorieren")
@@ -879,6 +931,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         config = load_config(args.config.expanduser(), persist_migration=not args.dry_run)
+        if args.recommendations:
+            print(recommendation_report(config, fixture_path=args.fixture))
+            return 0
         state_path = (args.state or Path(config["state_file"])).expanduser()
         report_path = (args.report or Path(config["report_file"])).expanduser()
         result = run_check(

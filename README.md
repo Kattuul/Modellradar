@@ -372,6 +372,16 @@ Für Skripte ist derselbe JSON-Vertrag direkt verfügbar:
 python3 model_radar_diagnostics.py --json
 ```
 
+### Hardware-Eignung für GGUF-Varianten
+
+`python3 model_radar.py --config config.json --recommendations` verbindet nur auf
+ausdrückliche Anforderung die sichtbare, lokal gelesene Grafikhardware mit
+öffentlichen Hugging-Face-Dateimetadaten. Es bewertet konkrete GGUF-Dateien als
+„gut passend“, „eingeschränkt“, „nicht empfohlen“ oder „unbekannt“. Modelle
+werden dabei weder heruntergeladen noch ausgeführt. Die Ausgabe nennt ihre
+konservative Speicherformel und bleibt bei fehlendem VRAM oder Dateigrößenwert
+bewusst bei „unbekannt“.
+
 ```bash
 systemctl --user status qwen35-model-radar.service qwen35-model-radar.timer
 journalctl --user -u qwen35-model-radar.service --since '14 days ago'

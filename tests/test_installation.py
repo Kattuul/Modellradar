@@ -41,7 +41,7 @@ class InstallationTests(unittest.TestCase):
                 {path.name for path in app_dir.glob("*.py")},
                 {
                     "model_radar.py", "model_radar_gui.py", "model_radar_diagnostics.py",
-                    "radar_gui_logic.py", "radar_gui_components.py", "radar_platform.py",
+                    "model_recommendations.py", "radar_gui_logic.py", "radar_gui_components.py", "radar_platform.py",
                 },
             )
             cli = target / ".local" / "bin" / "qwen35-model-radar"
