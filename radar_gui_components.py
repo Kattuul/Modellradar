@@ -264,7 +264,8 @@ class SettingsPage(Adw.PreferencesPage):
 
     @staticmethod
     def _text_view(text: str = "", monospace: bool = False, min_height: int = 90) -> Gtk.TextView:
-        view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, monospace=monospace)
+        # Tab wechselt das Feld; Tabulatoren gehören in keine Modellradar-Eingabe.
+        view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, monospace=monospace, accepts_tab=False)
         view.set_size_request(-1, min_height)
         view.get_buffer().set_text(text)
         return view
@@ -513,10 +514,11 @@ class _StatefulPage(Gtk.Box):
     def __init__(self, empty_title: str, empty_text: str, loading_text: str, on_cancel):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         self.stack = Gtk.Stack(vexpand=True)
-        self.stack.add_named(
-            Adw.StatusPage(icon_name="dialog-information-symbolic", title=empty_title, description=empty_text),
-            "empty",
+        self._empty_texts = (empty_title, empty_text)
+        self.empty_page = Adw.StatusPage(
+            icon_name="dialog-information-symbolic", title=empty_title, description=empty_text,
         )
+        self.stack.add_named(self.empty_page, "empty")
         loading = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, spacing=12,
             valign=Gtk.Align.CENTER, halign=Gtk.Align.CENTER,
@@ -556,7 +558,18 @@ class _StatefulPage(Gtk.Box):
         if follow:
             self.stack.get_visible_child().child_focus(Gtk.DirectionType.TAB_FORWARD)
 
+    def set_waiting(self, task: str) -> None:
+        """Erklärt einen leeren Zustand, solange noch eine andere Aufgabe läuft."""
+        self.empty_page.set_title("Startet gleich")
+        self.empty_page.set_description(
+            f"Gerade läuft noch eine andere Aufgabe. {task} beginnt danach automatisch."
+        )
+        self._switch("empty")
+        announce(self, self.empty_page.get_description())
+
     def set_loading(self) -> None:
+        self.empty_page.set_title(self._empty_texts[0])
+        self.empty_page.set_description(self._empty_texts[1])
         self.spinner.start()
         self._switch("loading")
         announce(self, self.loading_label.get_text())
@@ -1034,8 +1047,10 @@ class DiagnosticsPage(_StatefulPage):
         }
         for action, button in self.diagnostic_action_buttons.items():
             button.connect("clicked", callbacks[action])
-            button.set_visible(False)
             actions.append(button)
+            # Fokus gehört dem Button; die FlowBox-Hülle wäre sonst ein leerer Tab-Halt.
+            button.get_parent().set_focusable(False)
+            self._show_action(button, False)
         content.append(actions)
         self.details = Gtk.Expander(label="_Technische Details anzeigen", use_underline=True)
         self.text_view, scroll = _readonly_text_view("Technische Diagnosedaten")
@@ -1052,6 +1067,11 @@ class DiagnosticsPage(_StatefulPage):
         for button in self.diagnostic_action_buttons.values():
             button.set_sensitive(not busy)
         self.set_timer_available(self._timer_available)
+
+    @staticmethod
+    def _show_action(button: Gtk.Button, visible: bool) -> None:
+        button.set_visible(visible)
+        button.get_parent().set_visible(visible)
 
     def set_timer_available(self, available: bool) -> None:
         self._timer_available = available
@@ -1097,7 +1117,7 @@ class DiagnosticsPage(_StatefulPage):
             self.diagnostic_findings.remove(child)
             child = following
         for button in self.diagnostic_action_buttons.values():
-            button.set_visible(False)
+            self._show_action(button, False)
 
         severity_labels = {"error": "FEHLER", "warning": "WARNUNG", "info": "INFO"}
         counts = {"error": 0, "warning": 0, "info": 0}
@@ -1176,7 +1196,7 @@ class DiagnosticsPage(_StatefulPage):
         for action in requested_actions:
             button = self.diagnostic_action_buttons.get(action)
             if button is not None:
-                button.set_visible(True)
+                self._show_action(button, True)
         parts = []
         if counts["error"]:
             parts.append(f"{counts['error']} Fehler")
@@ -1369,8 +1389,9 @@ class OnboardingView(Gtk.Box):
     def _on_page_changed(self, _carousel, index: int) -> None:
         self._update_navigation()
         # Der Fokus landet auf „Weiter“; ohne Ansage bliebe der neue Seiteninhalt ungelesen.
+        # Der Seitentitel folgt ohnehin; der Schrittname davor würde ihn nur doppeln.
         if self.get_mapped():
-            announce(self, f"{self.step_label.get_text()}. {self._page_texts[index]}")
+            announce(self, f"Schritt {index + 1} von {self.carousel.get_n_pages()}: {self._page_texts[index]}")
 
     def _update_navigation(self, index: int | None = None) -> None:
         index = self.position() if index is None else index
@@ -1379,6 +1400,11 @@ class OnboardingView(Gtk.Box):
         self.next_button.set_visible(index < last)
         self.start_button.set_visible(index == last)
         self.step_label.set_text(f"Schritt {index + 1} von {last + 1}: {self.STEP_TITLES[index]}")
+        # Adw.Carousel hält alle Seiten gemappt; ohne Sperre führt Tab in unsichtbare Seiten.
+        for position in range(last + 1):
+            page = self.carousel.get_nth_page(position)
+            page.set_can_focus(position == index)
+            page.update_state([Gtk.AccessibleState.HIDDEN], [position != index])
         (self.start_button if index == last else self.next_button).grab_focus()
 
     def finish(self, start_check: bool) -> None:

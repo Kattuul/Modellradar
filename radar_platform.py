@@ -182,6 +182,9 @@ class SystemdScheduler:
         def capture(arguments: list[str], *, status: bool = False) -> str:
             result = run(arguments, text=True, capture_output=True, timeout=15, check=False)
             output = result.stdout.strip()
+            # Neuere systemd-Versionen melden eine fehlende Unit nur als „not-found“ auf stdout.
+            if status and output == "not-found":
+                raise RuntimeError("Der Hintergrunddienst ist nicht installiert")
             # systemctl uses nonzero codes for ordinary disabled/inactive states.
             if result.returncode and not (status and output in {
                 "enabled", "disabled", "static", "masked", "active", "inactive", "failed",

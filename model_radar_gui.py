@@ -68,6 +68,8 @@ class RadarWindow(Adw.ApplicationWindow):
         self.command_runner = CommandRunner()
         self.timer_controller = TimerController()
         self._busy = False
+        # Unteransichten, die während einer laufenden Aufgabe geöffnet wurden, holen ihre nach.
+        self._deferred_tasks = []
         self._onboarding_dialog = None
         self._timer_status: TimerStatus | None = None
         self._graphics_summary: tuple[str, str] | None = None
@@ -270,6 +272,8 @@ class RadarWindow(Adw.ApplicationWindow):
                 self.dashboard.set_error(result.status_text(), result.output)
             if callback:
                 callback(result)
+            if self._deferred_tasks:
+                self._deferred_tasks.pop(0)()
 
         self.command_runner.run(command, finish)
         return True
@@ -338,8 +342,14 @@ class RadarWindow(Adw.ApplicationWindow):
             finished,
         ):
             self.hardware_page.set_loading()
+        elif previous_state == "empty":
+            self._defer(self.hardware_page, "Die Berechnung", self.show_recommendations)
 
     def show_diagnostics(self, *_args) -> None:
+        self.navigation.push("diagnostics")
+        self.run_diagnostics()
+
+    def run_diagnostics(self) -> None:
         previous_state = self.diagnostics_page.state()
 
         def finished(result: CommandResult) -> None:
@@ -354,13 +364,20 @@ class RadarWindow(Adw.ApplicationWindow):
                 self.dashboard.set_status(message)
                 self.diagnostics_page.set_error(message, result.output)
 
-        self.navigation.push("diagnostics")
         if self.run_command(
             self.timer_controller.diagnostic_command(),
             "Dienstdiagnose wird geladen …",
             finished,
         ):
             self.diagnostics_page.set_loading()
+        elif previous_state == "empty":
+            # Der Banner bietet „Diagnose“ auch während einer laufenden Prüfung an.
+            self._defer(self.diagnostics_page, "Die Diagnose", self.run_diagnostics)
+
+    def _defer(self, page, task: str, start) -> None:
+        page.set_waiting(task)
+        if start not in self._deferred_tasks:
+            self._deferred_tasks.append(start)
 
     def open_settings(self, *_args) -> None:
         if not self.settings_window.get_visible():
@@ -443,6 +460,8 @@ class RadarWindow(Adw.ApplicationWindow):
             dialog.connect("close-request", lambda *_: self._onboarding_closed(view) or False)
             self._add_compact_breakpoint(dialog, view)
             dialog.present()
+        # Sonst fokussiert GTK das erste Element, „Überspringen“ – ein Enter beendete die Einführung.
+        dialog.set_focus(view.next_button)
         self._onboarding_dialog = dialog
         self.onboarding_view = view
         self._sync_onboarding_timer()

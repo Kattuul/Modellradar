@@ -77,6 +77,12 @@ class PlatformTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 1, stdout="irreführend", stderr="Bus fehlt")
         self.assertEqual(radar_platform.SystemdScheduler.query_status(failure).error, "Bus fehlt")
 
+    def test_fehlende_unit_wird_verstaendlich_benannt(self):
+        def missing(command, **kwargs):
+            return subprocess.CompletedProcess(command, 4, stdout="not-found\n", stderr="")
+        error = radar_platform.SystemdScheduler.query_status(missing).error
+        self.assertEqual(error, "Der Hintergrunddienst ist nicht installiert")
+
     def test_deaktivierter_timer_ist_keine_fehlende_systemfunktion(self):
         answers = iter(((1, "disabled"), (3, "inactive"), (0, "")))
         def executor(command, **kwargs):

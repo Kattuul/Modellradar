@@ -26,6 +26,24 @@
   Fehlerzustände sowie Kopier- und Neu-berechnen-Aktionen; ein Abbruch stellt
   das vorige Ergebnis wieder her. Die Vorschau erscheint als ungespeicherter
   Bericht, Fehlermeldungen bieten direkt „Dienstdiagnose öffnen“.
+- Barrierefreiheit: verständliche Namen für alle Bedienelemente, eindeutige
+  Tastenkürzel, Fokus folgt Zustandswechseln, Screenreader-Ansagen für Lade-,
+  Ergebnis- und Fehlerzustände; Zustände sind zusätzlich zur Farbe per Text
+  und Symbol erkennbar.
+- Fenster, Einstellungen und Einführung passen auf 1024×600-Bildschirme;
+  auf niedrigen und schmalen Displays entfallen rein dekorative Elemente.
+- Bericht und Hardware-Eignung erscheinen als Karten mit Kennzahlen statt als
+  Fließtext; der Rohtext bleibt eingeklappt verfügbar.
+- Modellkarten-Links öffnen nur noch Adressen auf `https://huggingface.co`.
+- Bedienbarkeit per Tastatur und Screenreader (Prüfung mit Orca auf Debian 13):
+  Tab bleibt in der Einführung auf der sichtbaren Seite und beginnt auf
+  „Weiter“ statt „Überspringen“; mehrzeilige Einstellungsfelder fangen Tab
+  nicht mehr ab; die Diagnose hat keinen leeren Fokus-Halt mehr; Seitenansagen
+  nennen den Titel nur einmal.
+- Wird eine Unteransicht geöffnet, während noch eine Aufgabe läuft, erklärt sie
+  das und startet danach automatisch, statt leer zu bleiben. Ein fehlender
+  systemd-Timer heißt jetzt „Der Hintergrunddienst ist nicht installiert“
+  statt `not-found`.
 - Debian 12 (GTK 4.8, libadwaita 1.2) startet die GUI wieder: Die markierbare
   API-Adresse nutzt `set_subtitle_selectable` nur, wo vorhanden. Die CI prüft
   zusätzlich `debian:12-slim`; `container_check.sh` führt denselben

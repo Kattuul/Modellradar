@@ -226,6 +226,10 @@ class GtkWorkflowTests(unittest.TestCase):
         self.assertFalse(any(
             button.get_visible() for button in page.diagnostic_action_buttons.values()
         ))
+        # Auch die FlowBox-Hüllen verschwinden, sonst bliebe ein leerer, fokussierbarer Kasten.
+        self.assertFalse(any(
+            button.get_parent().get_visible() for button in page.diagnostic_action_buttons.values()
+        ))
 
     def test_ungueltige_diagnose_zeigt_fehler_ohne_alte_aktionen(self):
         self.window.lookup_action("diagnostics").activate(None)
@@ -345,6 +349,21 @@ class GtkWorkflowTests(unittest.TestCase):
         self.assertIn("--force", self.runner.command)
         self.assertIsNone(self.window._onboarding_dialog)
 
+    def test_einfuehrung_beginnt_mit_fokus_auf_weiter(self):
+        self.window.present()
+        self.window.show_onboarding()
+        self.assertIs(self.window._onboarding_dialog.get_focus(), self.window.onboarding_view.next_button)
+
+    def test_einfuehrung_tab_bleibt_auf_sichtbarer_seite(self):
+        self.window.present()
+        self.window.show_onboarding()
+        view = self.window.onboarding_view
+        for index in range(view.carousel.get_n_pages()):
+            view.go_to(index)
+            focusable = [view.carousel.get_nth_page(i).get_can_focus()
+                         for i in range(view.carousel.get_n_pages())]
+            self.assertEqual(focusable, [i == index for i in range(len(focusable))])
+
     def test_einfuehrung_zeigt_echten_timerzustand_und_hardware(self):
         self.window.present()
         self.window.show_onboarding()
@@ -427,6 +446,25 @@ class GtkWorkflowTests(unittest.TestCase):
         self.runner.callback(CommandResult(1, "Netzwerkfehler"))
         self.assertEqual(page.state(), "error")
         self.assertIn("Netzwerkfehler", page.error_label.get_text())
+
+    def test_unteransicht_waehrend_laufender_aufgabe_startet_danach(self):
+        overview = self.window.navigation.visible_tag()
+        self.window.run_radar("force")
+        check = self.runner.callback
+        self.window.open_hardware()
+        self.window.show_diagnostics()
+        self.assertIn("Gerade läuft noch eine andere Aufgabe", self.window.diagnostics_page.empty_page.get_description())
+        self.assertEqual(self.window.hardware_page.empty_page.get_title(), "Startet gleich")
+        self.window.navigation.pop_to_root()
+
+        check(CommandResult(0, "ok"))
+        self.assertIn("--recommendations", self.runner.command)
+        self.assertEqual(self.window.hardware_page.state(), "loading")
+        self.runner.callback(CommandResult(0, "EIGNUNG\n"))
+        self.assertIn("--json", self.runner.command)
+        self.assertEqual(self.window.diagnostics_page.state(), "loading")
+        # Das Nachholen holt niemanden in eine Ansicht zurück, die bereits verlassen wurde.
+        self.assertEqual(self.window.navigation.visible_tag(), overview)
 
     def test_bericht_und_eignung_erscheinen_als_karten_mit_text_statt_nur_farbe(self):
         page = self.window.report_page
@@ -575,6 +613,11 @@ class GtkWorkflowTests(unittest.TestCase):
         while parent is not None and parent is not stop:
             yield parent
             parent = parent.get_parent()
+
+    def test_tab_verlaesst_mehrzeilige_felder(self):
+        page = self.window.settings_page
+        views = (page.publishers_view, page.families_view, page.excluded_view, self.window.report_page.text_view)
+        self.assertFalse(any(view.get_accepts_tab() for view in views))
 
     def test_escape_schliesst_einstellungen(self):
         self.window.open_settings()
