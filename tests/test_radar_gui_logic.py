@@ -145,6 +145,14 @@ Erkannte Lebenszyklusänderungen: 4
         self.assertEqual(logic.format_timer_time("Tue 2026-10-13 00:09:53 CEST"), "13.10.2026 00:09 CEST")
         self.assertEqual(logic.format_timer_time("n/a"), "n/a")
 
+    def test_nur_modellkarten_auf_huggingface_werden_geoeffnet(self):
+        self.assertEqual(logic.model_card_uri("https://huggingface.co/Qwen/Qwen3.5-9B"), "https://huggingface.co/Qwen/Qwen3.5-9B")
+        for value in (
+            None, "", "file:///etc/passwd", "http://huggingface.co/Qwen/x", "https://huggingface.co.evil.example/x",
+            "https://user@huggingface.co/x", "https://huggingface.co:8443/x", "javascript:alert(1)", "smb://host/share",
+        ):
+            self.assertIsNone(logic.model_card_uri(value), value)
+
     def test_einfuehrungsstand_wird_gespeichert_und_begrenzt(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "gui-preferences.json"

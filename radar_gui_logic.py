@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -237,6 +238,18 @@ def hardware_result(text: str) -> dict[str, Any]:
         "notes": re.findall(r"^Hinweis:\s*(.+)$", text, re.MULTILINE),
         "items": _entries(text, HARDWARE_RATING_LABELS),
     }
+
+
+def model_card_uri(value: str | None) -> str | None:
+    """Lässt nur Modellkarten auf huggingface.co zu; Berichte sind Dateien und könnten verändert sein."""
+    if not value:
+        return None
+    parsed = urllib.parse.urlparse(value.strip())
+    if parsed.scheme != "https" or parsed.hostname != "huggingface.co" or parsed.port is not None:
+        return None
+    if parsed.username or parsed.password:
+        return None
+    return parsed.geturl()
 
 
 def format_timestamp(value: str) -> str:

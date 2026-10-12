@@ -834,8 +834,9 @@ class ReportPage(_StatefulPage):
             detail = Adw.ActionRow(title=label, subtitle=_plain(value), subtitle_lines=0)
             detail.add_css_class("property")
             row.add_row(detail)
-        if fields.get("Link"):
-            row.add_row(_link_row("Modellkarte öffnen", fields["Link"]))
+        link = logic.model_card_uri(fields.get("Link"))
+        if link:
+            row.add_row(_link_row("Modellkarte öffnen", link))
         return row
 
     def _show(self, text: str, summary: dict[str, str], preview: bool) -> None:
@@ -951,7 +952,7 @@ class HardwarePage(_StatefulPage):
         row = Adw.ActionRow(title=_plain(item["repo_id"]), subtitle=_plain("\n".join(lines)), subtitle_lines=0)
         icon, css_class = HARDWARE_RATING_STYLES[item["status"]]
         row.add_prefix(_status_icon(icon, css_class))
-        url = fields.get("Modellkarte")
+        url = logic.model_card_uri(fields.get("Modellkarte"))
         if url:
             row.set_activatable(True)
             row.set_tooltip_text("Modellkarte im Browser öffnen")
