@@ -300,6 +300,11 @@ class SettingsPage(Adw.PreferencesPage):
         self.config = config
 
 
+def _plain(text: str) -> str:
+    """Maskiert Fremdtext für Adwaita-Eigenschaften, die Pango-Markup auswerten."""
+    return GLib.markup_escape_text(text)
+
+
 def copy_to_clipboard(widget: Gtk.Widget, text: str, label: str, notify: Callable[[str], None]) -> None:
     if not text:
         notify(f"Kein {label} zum Kopieren vorhanden.")
@@ -442,7 +447,7 @@ class _StatefulPage(Gtk.Box):
 
     def set_error(self, summary: str, details: str) -> None:
         self.spinner.stop()
-        self.error_page.set_description(summary)
+        self.error_page.set_description(_plain(summary))
         self.error_label.set_text(details.strip() or "Keine technischen Details verfügbar.")
         self.error_details.set_expanded(False)
         self.stack.set_visible_child_name("error")
@@ -575,14 +580,14 @@ class DashboardPage(Gtk.ScrolledWindow):
         self.error_details.set_visible(False)
 
     def set_report_summary(self, summary: dict[str, str]) -> None:
-        self.report_row.set_subtitle(
+        self.report_row.set_subtitle(_plain(
             "Letzte Prüfung: {checked_at}\nNeu: {new} · Aktualisiert: {updated} · "
             "Entfernt: {removed} · Wieder erschienen: {returned}".format(**summary)
-        )
+        ))
         self.report_row.set_sensitive(True)
 
     def set_graphics(self, title: str) -> None:
-        self.hardware_row.set_subtitle(f"{title} · Welche Modelldateien passen?")
+        self.hardware_row.set_subtitle(_plain(f"{title} · Welche Modelldateien passen?"))
 
     def _on_timer_switch(self, switch: Gtk.Switch, state: bool) -> bool:
         if self._syncing_timer:
@@ -599,7 +604,7 @@ class DashboardPage(Gtk.ScrolledWindow):
             subtitle = "Eingeschaltet" + (f" · nächster Start: {status.next_run}" if status.next_run else "")
         else:
             subtitle = "Ausgeschaltet · Prüfungen nur manuell"
-        self.timer_row.set_subtitle(subtitle)
+        self.timer_row.set_subtitle(_plain(subtitle))
         self.timer_row.set_tooltip_text(status.display_text())
         self._syncing_timer = True
         try:
@@ -719,8 +724,8 @@ class HardwarePage(_StatefulPage):
         self.add_result(scroll)
 
     def set_graphics(self, title: str, detail: str) -> None:
-        self.graphics_row.set_title(title)
-        self.graphics_row.set_subtitle(detail)
+        self.graphics_row.set_title(_plain(title))
+        self.graphics_row.set_subtitle(_plain(detail))
 
     def set_busy(self, busy: bool) -> None:
         self.refresh_button.set_sensitive(not busy)
@@ -1044,8 +1049,8 @@ class OnboardingView(Gtk.Box):
         )
 
     def set_hardware(self, title: str, detail: str) -> None:
-        self.hardware_row.set_title(title)
-        self.hardware_row.set_subtitle(detail)
+        self.hardware_row.set_title(_plain(title))
+        self.hardware_row.set_subtitle(_plain(detail))
 
     def set_timer_state(self, enabled: bool, available: bool) -> None:
         """Beschreibt den tatsächlichen Timerzustand, auch beim erneuten Aufruf."""

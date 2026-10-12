@@ -187,7 +187,7 @@ class RadarWindow(Adw.ApplicationWindow):
         return window
 
     def show_toast(self, text: str) -> None:
-        self.toast_overlay.add_toast(Adw.Toast(title=text))
+        self.toast_overlay.add_toast(Adw.Toast(title=GLib.markup_escape_text(text)))
 
     def _save_preferences(self, *_args) -> bool:
         width, height = self.get_width(), self.get_height()
@@ -212,7 +212,7 @@ class RadarWindow(Adw.ApplicationWindow):
             return True
         except (model_radar.RadarError, OSError) as exc:
             self.settings_window.present()
-            self.settings_toast_overlay.add_toast(Adw.Toast(title=f"Nicht gespeichert: {exc}", timeout=0))
+            self.settings_toast_overlay.add_toast(Adw.Toast(title=GLib.markup_escape_text(f"Nicht gespeichert: {exc}"), timeout=0))
             return False
 
     def set_busy(self, busy: bool, message: str = "") -> None:
@@ -445,7 +445,9 @@ class RadarWindow(Adw.ApplicationWindow):
         self.dashboard.set_timer_status(status)
         self.diagnostics_page.set_timer_available(not status.error)
         if self.banner is not None:
-            self.banner.set_title(f"Automatische Prüfungen nicht verfügbar: {status.error}" if status.error else "")
+            self.banner.set_title(
+                GLib.markup_escape_text(f"Automatische Prüfungen nicht verfügbar: {status.error}") if status.error else ""
+            )
             self.banner.set_revealed(bool(status.error))
         self._sync_onboarding_timer()
 
