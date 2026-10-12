@@ -16,7 +16,7 @@ except (ImportError, ValueError) as exc:
 import model_radar
 import radar_gui_logic as logic
 from model_radar_gui import ONBOARDING_VERSION, RadarWindow
-from radar_gui_components import CommandResult, TimerStatus
+from radar_gui_components import CommandResult, NavigationHost, TimerStatus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,36 +81,36 @@ class GtkWorkflowTests(unittest.TestCase):
 
     @staticmethod
     def output_text(window):
-        buffer = window.actions_page.output_view.get_buffer()
-        return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
+        return window.report_page.text()
 
     def test_fortschritt_und_automatisches_berichtsladen(self):
         with mock.patch("radar_gui_logic.validate_data_path", side_effect=lambda value, _label: value):
-            self.window.actions_page.run_button.emit("clicked")
+            self.window.dashboard.run_button.emit("clicked")
             self.assertTrue(self.window._busy)
-            self.assertTrue(self.window.actions_page.progress.get_visible())
-            self.assertNotEqual(self.window.actions_page._pulse_source, 0)
-            self.assertTrue(self.window.actions_page.cancel_button.get_sensitive())
+            self.assertTrue(self.window.dashboard.progress.get_visible())
+            self.assertNotEqual(self.window.dashboard._pulse_source, 0)
+            self.assertTrue(self.window.dashboard.cancel_button.get_sensitive())
             self.runner.callback(CommandResult(0, "Prüfung abgeschlossen.\n"))
         self.assertFalse(self.window._busy)
-        self.assertFalse(self.window.actions_page.progress.get_visible())
-        self.assertFalse(self.window.actions_page.cancel_button.get_visible())
+        self.assertFalse(self.window.dashboard.progress.get_visible())
+        self.assertFalse(self.window.dashboard.cancel_button.get_visible())
         self.assertEqual(self.output_text(self.window), "AUTOMATISCH GELADENER BERICHT\n")
-        self.assertTrue(self.window.actions_page.summary_label.get_visible())
-        self.assertTrue(self.window.actions_page.copy_report_button.get_sensitive())
+        self.assertTrue(self.window.dashboard.report_row.get_sensitive())
+        self.assertTrue(self.window.report_page.copy_button.get_sensitive())
 
     def test_abgebrochener_lauf_lädt_keinen_alten_bericht(self):
         with mock.patch("radar_gui_logic.validate_data_path", side_effect=lambda value, _label: value):
-            self.window.actions_page.run_button.emit("clicked")
-        self.window.actions_page.cancel_button.emit("clicked")
+            self.window.dashboard.run_button.emit("clicked")
+        self.window.dashboard.cancel_button.emit("clicked")
         self.assertTrue(self.runner.cancelled)
-        self.assertIn("Abbruch angefordert", self.window.actions_page.status_label.get_text())
+        self.assertIn("Abbruch angefordert", self.window.dashboard.status_label.get_text())
         self.runner.callback(CommandResult(-15, "PROZESS ABGEBROCHEN\n", cancelled=True))
-        self.assertEqual(self.output_text(self.window), "PROZESS ABGEBROCHEN\n")
-        self.assertEqual(self.window.actions_page.status_label.get_text(), "Abgebrochen.")
+        self.assertEqual(self.output_text(self.window), "AUTOMATISCH GELADENER BERICHT\n")
+        self.assertEqual(self.window.dashboard.status_label.get_text(), "Abgebrochen.")
+        self.assertFalse(self.window.dashboard.error_details.get_visible())
 
     def test_ohne_systemd_bleiben_pruefung_und_bericht_bedienbar(self):
-        page = self.window.actions_page
+        page = self.window.dashboard
         self.window.apply_timer_status(TimerStatus("", "", error="Kein Benutzerdienst"))
         for busy in (True, False):
             page.set_busy(busy)
@@ -121,7 +121,7 @@ class GtkWorkflowTests(unittest.TestCase):
         self.assertIn("Kein Benutzerdienst", self.window.banner.get_title())
 
     def test_timerschalter_folgt_dem_gemeldeten_zustand(self):
-        page = self.window.actions_page
+        page = self.window.dashboard
         self.window.apply_timer_status(TimerStatus("disabled", "inactive"))
         self.assertFalse(self.window.banner.get_revealed())
         self.assertFalse(page.timer_switch.get_active())
@@ -160,12 +160,13 @@ class GtkWorkflowTests(unittest.TestCase):
             }],
             "journal": "Testjournal",
         })))
-        page = self.window.actions_page
-        self.assertTrue(page.diagnostic_panel.get_visible())
+        page = self.window.diagnostics_page
+        self.assertEqual(self.window.navigation.visible_tag(), "diagnostics")
+        self.assertEqual(page.state(), "result")
         self.assertIn("1 Warnung", page.diagnostic_title.get_text())
         self.assertTrue(page.diagnostic_action_buttons["enable_timer"].get_visible())
-        self.assertIn("Nächster Schritt: Timer aktivieren.", self.output_text(self.window))
-        self.assertIn("Timer: loaded / inactive / disabled", self.output_text(self.window))
+        self.assertIn("Nächster Schritt: Timer aktivieren.", page.diagnostic_text)
+        self.assertIn("Timer: loaded / inactive / disabled", page.diagnostic_text)
 
         page.diagnostic_action_buttons["open_settings"].emit("clicked")
         self.assertTrue(self.window.settings_window.get_visible())
@@ -178,15 +179,19 @@ class GtkWorkflowTests(unittest.TestCase):
             self.runner.command,
             ["systemctl", "--user", "enable", "--now", "qwen35-model-radar.timer"],
         )
-        self.assertTrue(page.copy_diagnostic_button.get_sensitive())
+        self.assertTrue(page.copy_button.get_sensitive())
 
     def test_leerzustand_und_fehlerdetails_sind_verstaendlich(self):
-        page = self.window.actions_page
+        page = self.window.dashboard
         self.window.run_command(["unbekannt"], "Test")
         self.runner.callback(CommandResult(2, "Konkretes technisches Detail"))
         self.assertTrue(page.error_details.get_visible())
         self.assertIn("Exitcode 2", page.status_label.get_text())
         self.assertIn("Konkretes", page.error_label.get_text())
+        # Der nächste Schritt führt direkt aus der Fehlermeldung zur Diagnose.
+        page.diagnose_button.emit("clicked")
+        self.assertEqual(self.window.navigation.visible_tag(), "diagnostics")
+        self.assertEqual(self.window.diagnostics_page.state(), "loading")
 
     def test_timeraktivierung_braucht_bestaetigung(self):
         dialog = mock.Mock()
@@ -214,7 +219,7 @@ class GtkWorkflowTests(unittest.TestCase):
             "findings": [],
             "journal": "",
         })))
-        page = self.window.actions_page
+        page = self.window.diagnostics_page
         self.assertIn("keine Fehler", page.diagnostic_title.get_text())
         self.assertFalse(any(
             button.get_visible() for button in page.diagnostic_action_buttons.values()
@@ -223,11 +228,11 @@ class GtkWorkflowTests(unittest.TestCase):
     def test_ungueltige_diagnose_zeigt_fehler_ohne_alte_aktionen(self):
         self.window.lookup_action("diagnostics").activate(None)
         self.runner.callback(CommandResult(0, "[]"))
-        self.assertIn("kann nicht ausgewertet werden", self.window.actions_page.status_label.get_text())
-        self.assertFalse(self.window.actions_page.diagnostic_panel.get_visible())
+        self.assertIn("kann nicht ausgewertet werden", self.window.dashboard.status_label.get_text())
+        self.assertEqual(self.window.diagnostics_page.state(), "error")
 
     def test_hauptansicht_priorisiert_aktionen_und_menu(self):
-        page = self.window.actions_page
+        page = self.window.dashboard
         self.assertFalse(page.cancel_button.get_visible())
         for action in ("preferences", "onboarding", "dry-run", "diagnostics", "shortcuts", "about"):
             self.assertIsNotNone(self.window.lookup_action(action))
@@ -238,15 +243,16 @@ class GtkWorkflowTests(unittest.TestCase):
 
     def test_bericht_wird_beim_start_still_geladen(self):
         self.assertEqual(self.output_text(self.window), "AUTOMATISCH GELADENER BERICHT\n")
-        self.assertFalse(self.window.actions_page.error_details.get_visible())
+        self.assertFalse(self.window.dashboard.error_details.get_visible())
 
     def test_fehlender_bericht_beim_start_ist_kein_fehler(self):
         self.window.close()
         self.report_path.unlink()
         with mock.patch("radar_gui_components.TimerController.refresh"):
             self.window = RadarWindow(self.app, self.config_path)
-        self.assertEqual(self.window.actions_page.output_stack.get_visible_child_name(), "empty")
-        self.assertFalse(self.window.actions_page.error_details.get_visible())
+        self.assertEqual(self.window.report_page.state(), "empty")
+        self.assertFalse(self.window.dashboard.report_row.get_sensitive())
+        self.assertFalse(self.window.dashboard.error_details.get_visible())
 
     def test_einstellungen_sind_gruppiert_und_speichern_mit_toast(self):
         page = self.window.settings_page
@@ -362,6 +368,87 @@ class GtkWorkflowTests(unittest.TestCase):
         announce.assert_called_once()
         toast.assert_not_called()
         self.assertEqual(self.output_text(self.window), "ERSTER BERICHT\n")
+
+    def test_bericht_ist_eigene_unteransicht_mit_kopieraktion(self):
+        nav = self.window.navigation
+        self.assertEqual(nav.visible_tag(), "dashboard")
+        self.window.dashboard.report_row.emit("activated")
+        self.assertEqual(nav.visible_tag(), "report")
+        self.assertEqual(self.window.report_page.state(), "result")
+        self.assertFalse(self.window.report_page.preview_label.get_visible())
+        with mock.patch.object(self.window.report_page, "notify") as toast:
+            self.window.report_page.copy_button.emit("clicked")
+        toast.assert_called_once_with("Bericht in die Zwischenablage kopiert.")
+        nav.pop()
+        self.assertEqual(nav.visible_tag(), "dashboard")
+
+    def test_vorschau_erscheint_als_ungespeicherter_bericht(self):
+        self.window.lookup_action("dry-run").activate(None)
+        self.assertIn("--dry-run", self.runner.command)
+        self.assertEqual(self.window.navigation.visible_tag(), "report")
+        self.assertEqual(self.window.report_page.state(), "loading")
+        self.runner.callback(CommandResult(0, "VORSCHAU\n[NEU] org/modell\n"))
+        self.assertEqual(self.output_text(self.window), "VORSCHAU\n[NEU] org/modell\n")
+        self.assertTrue(self.window.report_page.preview_label.get_visible())
+        self.assertIn("Neu: 1", self.window.report_page.summary_label.get_text())
+
+        # Über das Dashboard erscheint wieder der gespeicherte Bericht.
+        self.window.navigation.pop()
+        self.window.open_report()
+        self.assertEqual(self.output_text(self.window), "AUTOMATISCH GELADENER BERICHT\n")
+        self.assertFalse(self.window.report_page.preview_label.get_visible())
+
+    def test_hardware_eignung_rechnet_einmal_und_auf_wunsch_neu(self):
+        page = self.window.hardware_page
+        self.window.apply_graphics_summary(("Grafikkarte mit 8,0 GiB Grafikspeicher erkannt", "AMD"))
+        self.assertIn("8,0 GiB", self.window.dashboard.hardware_row.get_subtitle())
+        self.window.dashboard.hardware_row.emit("activated")
+        self.assertEqual(self.window.navigation.visible_tag(), "hardware")
+        self.assertEqual(self.runner.command, logic.recommendations_command(self.config_path))
+        self.assertEqual(page.state(), "loading")
+        self.assertFalse(page.refresh_button.get_sensitive())
+        self.runner.callback(CommandResult(0, "EIGNUNG\n"))
+        self.assertEqual(page.state(), "result")
+        self.assertTrue(page.copy_button.get_sensitive())
+
+        # Erneutes Öffnen zeigt das vorhandene Ergebnis, ohne neu abzufragen.
+        self.window.navigation.pop()
+        self.runner.command = None
+        self.window.open_hardware()
+        self.assertIsNone(self.runner.command)
+
+        # Ein abgebrochenes Neuberechnen stellt das alte Ergebnis wieder her.
+        page.refresh_button.emit("clicked")
+        self.runner.callback(CommandResult(-15, "", cancelled=True))
+        self.assertEqual(page.state(), "result")
+        page.refresh_button.emit("clicked")
+        self.runner.callback(CommandResult(1, "Netzwerkfehler"))
+        self.assertEqual(page.state(), "error")
+        self.assertIn("Netzwerkfehler", page.error_label.get_text())
+
+    def test_pruefung_aus_diagnose_kehrt_zur_uebersicht_zurueck(self):
+        self.window.lookup_action("diagnostics").activate(None)
+        self.runner.callback(CommandResult(0, json.dumps({
+            "schema_version": 1, "service": {}, "timer": {},
+            "findings": [{"severity": "error", "title": "Fehlgeschlagen", "actions": ["run_check"]}],
+        })))
+        self.window.diagnostics_page.diagnostic_action_buttons["run_check"].emit("clicked")
+        self.assertEqual(self.window.navigation.visible_tag(), "dashboard")
+        self.assertIn("--force", self.runner.command)
+
+    def test_navigation_ohne_navigationview_nutzt_stack_mit_zurueck(self):
+        host = NavigationHost(native=False)
+        self.assertIsInstance(host.widget, Gtk.Stack)
+        host.add("dashboard", "Start", Adw.HeaderBar(), Gtk.Label())
+        sub_header = Adw.HeaderBar()
+        host.add("report", "Bericht", sub_header, Gtk.Label())
+        self.assertEqual(host.visible_tag(), "dashboard")
+        host.push("report")
+        self.assertEqual(host.widget.get_visible_child_name(), "report")
+        host.pop()
+        self.assertEqual(host.visible_tag(), "dashboard")
+        host.pop()
+        self.assertEqual(host.visible_tag(), "dashboard")
 
 
 if __name__ == "__main__":

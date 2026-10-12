@@ -300,167 +300,253 @@ class SettingsPage(Adw.PreferencesPage):
         self.config = config
 
 
-class ActionsPage(Gtk.Box):
-    """Bedienseite für Prüfungen, Berichtsausgabe und automatische Prüfungen."""
+def copy_to_clipboard(widget: Gtk.Widget, text: str, label: str, notify: Callable[[str], None]) -> None:
+    if not text:
+        notify(f"Kein {label} zum Kopieren vorhanden.")
+        return
+    widget.get_clipboard().set(text)
+    notify(f"{label} in die Zwischenablage kopiert.")
+
+
+def _readonly_text_view() -> tuple[Gtk.TextView, Gtk.ScrolledWindow]:
+    view = SettingsPage._text_view("", True, 300)
+    view.set_editable(False)
+    view.set_cursor_visible(False)
+    scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+    scroll.set_child(view)
+    return view, scroll
+
+
+def _icon_button(icon: str, tooltip: str, callback) -> Gtk.Button:
+    button = Gtk.Button(icon_name=icon, tooltip_text=tooltip)
+    button.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
+    button.connect("clicked", callback)
+    return button
+
+
+class NavigationHost:
+    """Hierarchische Navigation: Adw.NavigationView ab libadwaita 1.4, sonst Gtk.Stack.
+
+    Unterseiten erhalten automatisch einen Zurück-Button; mit NavigationView
+    funktionieren zusätzlich Alt+←, die Zurück-Maustaste und Wischgesten.
+    """
+
+    def __init__(self, native: bool | None = None):
+        supported = hasattr(Adw, "NavigationView") and hasattr(Adw, "ToolbarView")
+        self.native = supported if native is None else native and supported
+        if self.native:
+            self.widget = Adw.NavigationView(vexpand=True)
+        else:
+            self.widget = Gtk.Stack(
+                vexpand=True, transition_type=Gtk.StackTransitionType.SLIDE_LEFT_RIGHT,
+            )
+        self._history: list[str] = []
+
+    def add(self, tag: str, title: str, header: Adw.HeaderBar, content: Gtk.Widget,
+            top_bars: Sequence[Gtk.Widget] = ()) -> None:
+        if self.native:
+            toolbar = Adw.ToolbarView(content=content)
+            toolbar.add_top_bar(header)
+            for bar in top_bars:
+                toolbar.add_top_bar(bar)
+            self.widget.add(Adw.NavigationPage(title=title, tag=tag, child=toolbar))
+            return
+        if self._history:
+            header.pack_start(_icon_button("go-previous-symbolic", "Zurück", lambda *_: self.pop()))
+        if header.get_title_widget() is None:
+            header.set_title_widget(Adw.WindowTitle(title=title, subtitle=""))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        for widget in (header, *top_bars, content):
+            box.append(widget)
+        self.widget.add_named(box, tag)
+        if not self._history:
+            self._history.append(tag)
+
+    def push(self, tag: str) -> None:
+        if self.visible_tag() == tag:
+            return
+        if self.native:
+            self.widget.push_by_tag(tag)
+            return
+        self._history.append(tag)
+        self.widget.set_visible_child_name(tag)
+
+    def pop(self) -> None:
+        if self.native:
+            self.widget.pop()
+        elif len(self._history) > 1:
+            self._history.pop()
+            self.widget.set_visible_child_name(self._history[-1])
+
+    def pop_to_root(self) -> None:
+        while self.visible_tag() != "dashboard":
+            self.pop()
+
+    def visible_tag(self) -> str:
+        if self.native:
+            page = self.widget.get_visible_page()
+            return page.get_tag() if page is not None else ""
+        return self._history[-1] if self._history else ""
+
+
+class _StatefulPage(Gtk.Box):
+    """Unterseite mit eindeutigen Zuständen: leer, lädt, Ergebnis oder Fehler."""
+
+    def __init__(self, empty_title: str, empty_text: str, loading_text: str, on_cancel):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
+        self.stack = Gtk.Stack(vexpand=True)
+        self.stack.add_named(
+            Adw.StatusPage(icon_name="dialog-information-symbolic", title=empty_title, description=empty_text),
+            "empty",
+        )
+        loading = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=12,
+            valign=Gtk.Align.CENTER, halign=Gtk.Align.CENTER,
+        )
+        self.spinner = Gtk.Spinner(width_request=32, height_request=32)
+        loading.append(self.spinner)
+        self.loading_label = Gtk.Label(label=loading_text, wrap=True, justify=Gtk.Justification.CENTER)
+        loading.append(self.loading_label)
+        cancel = Gtk.Button(label="Abbrechen", halign=Gtk.Align.CENTER)
+        cancel.connect("clicked", on_cancel)
+        loading.append(cancel)
+        self.stack.add_named(loading, "loading")
+        self.error_page = Adw.StatusPage(icon_name="dialog-warning-symbolic", title="Das hat nicht geklappt")
+        error_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.error_details = Gtk.Expander(label="Technische Details anzeigen")
+        self.error_label = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        self.error_details.set_child(self.error_label)
+        error_box.append(self.error_details)
+        self.error_page.set_child(Adw.Clamp(maximum_size=600, child=error_box))
+        self.stack.add_named(self.error_page, "error")
+        self.append(self.stack)
+
+    def add_result(self, widget: Gtk.Widget) -> None:
+        self.stack.add_named(widget, "result")
+
+    def state(self) -> str:
+        return self.stack.get_visible_child_name()
+
+    def set_loading(self) -> None:
+        self.spinner.start()
+        self.stack.set_visible_child_name("loading")
+
+    def show_result(self) -> None:
+        self.spinner.stop()
+        self.stack.set_visible_child_name("result")
+
+    def restore(self, state: str) -> None:
+        """Kehrt nach einem Abbruch zum vorher sichtbaren Zustand zurück."""
+        self.spinner.stop()
+        self.stack.set_visible_child_name(state)
+
+    def set_error(self, summary: str, details: str) -> None:
+        self.spinner.stop()
+        self.error_page.set_description(summary)
+        self.error_label.set_text(details.strip() or "Keine technischen Details verfügbar.")
+        self.error_details.set_expanded(False)
+        self.stack.set_visible_child_name("error")
+
+
+class DashboardPage(Gtk.ScrolledWindow):
+    """Übersicht: eine Hauptaktion, Status und Wege zu den Unteransichten."""
 
     def __init__(
-        self, on_force_run, on_cancel, on_recommendations,
-        on_enable_timer, on_disable_timer, on_diagnostics, on_open_settings,
-        notify: Callable[[str], None] | None = None,
+        self, on_force_run, on_cancel, on_open_report, on_open_hardware,
+        on_enable_timer, on_disable_timer, on_diagnostics,
     ):
-        super().__init__(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=14,
-            margin_top=24,
-            margin_bottom=24,
-            margin_start=24,
-            margin_end=24,
+        super().__init__(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=14,
+            margin_top=24, margin_bottom=24, margin_start=24, margin_end=24,
         )
-        self.notify = notify or self.set_status
+        self.set_child(Adw.Clamp(maximum_size=720, child=box))
         heading = Gtk.Label(label="Modellprüfung", xalign=0)
         heading.add_css_class("title-2")
-        self.append(heading)
-        self.append(Gtk.Label(
-            label="Neue und geänderte Modelle finden oder ihre Eignung für diesen Rechner prüfen.",
+        box.append(heading)
+        box.append(Gtk.Label(
+            label="Findet neue und geänderte Sprachmodelle anhand öffentlicher Metadaten. "
+            "Es werden keine Modelle heruntergeladen oder ausgeführt.",
             xalign=0, wrap=True,
         ))
-        button_box = Gtk.FlowBox(
-            selection_mode=Gtk.SelectionMode.NONE, column_spacing=10, row_spacing=10,
-        )
+        self.check_label = Gtk.Label(label="API-Prüfstatus wird geladen …", xalign=0, wrap=True)
+        self.check_label.add_css_class("dim-label")
+        box.append(self.check_label)
+
+        button_box = Gtk.Box(spacing=10)
         self.run_button = Gtk.Button(label="Jetzt prüfen")
         self.run_button.add_css_class("suggested-action")
+        self.run_button.add_css_class("pill")
         self.run_button.set_tooltip_text("Startet eine reguläre Prüfung und aktualisiert danach den Bericht.")
         self.run_button.connect("clicked", on_force_run)
-        self.cancel_button = Gtk.Button(label="Lauf abbrechen", sensitive=False)
+        self.cancel_button = Gtk.Button(label="Lauf abbrechen", sensitive=False, visible=False)
+        self.cancel_button.add_css_class("pill")
         self.cancel_button.set_tooltip_text("Fordert den Abbruch der aktuell laufenden Prüfung an.")
         self.cancel_button.connect("clicked", on_cancel)
-        self.cancel_button.set_visible(False)
-        self.recommendations_button = Gtk.Button(label="Hardware-Eignung")
-        self.recommendations_button.set_tooltip_text(
-            "Vergleicht sichtbaren VRAM mit öffentlichen GGUF-Dateimetadaten. Lädt keine Modelle herunter."
-        )
-        self.recommendations_button.connect("clicked", on_recommendations)
-        for button in (self.run_button, self.recommendations_button, self.cancel_button):
-            button_box.append(button)
-        self.append(button_box)
+        button_box.append(self.run_button)
+        button_box.append(self.cancel_button)
+        box.append(button_box)
 
+        self.progress = Gtk.ProgressBar(show_text=True, text="Vorgang läuft …", visible=False)
+        box.append(self.progress)
+        self._pulse_source = 0
+        self.status_label = Gtk.Label(label="Bereit", xalign=0, wrap=True)
+        self.status_label.add_css_class("dim-label")
+        box.append(self.status_label)
+        self.error_details = Gtk.Expander(label="Technische Details anzeigen", visible=False)
+        error_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.error_label = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        self.error_label.add_css_class("error")
+        error_box.append(self.error_label)
+        # Bei Fehlern führt der nächste Schritt direkt zur Diagnose.
+        self.diagnose_button = Gtk.Button(label="Dienstdiagnose öffnen", halign=Gtk.Align.START)
+        self.diagnose_button.connect("clicked", on_diagnostics)
+        error_box.append(self.diagnose_button)
+        self.error_details.set_child(error_box)
+        box.append(self.error_details)
+
+        overview = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, margin_top=10)
+        overview.add_css_class("boxed-list")
         self._on_enable_timer = on_enable_timer
         self._on_disable_timer = on_disable_timer
         self._syncing_timer = False
+        self._timer_available = False
+        self._busy = False
         self.timer_switch = Gtk.Switch(valign=Gtk.Align.CENTER, sensitive=False)
         self.timer_switch.set_tooltip_text(
             "Einschalten fragt nach, weil regelmäßige Netzwerkprüfungen im Hintergrund starten."
         )
         self.timer_switch.update_property([Gtk.AccessibleProperty.LABEL], ["Automatische Prüfungen"])
         self.timer_switch.connect("state-set", self._on_timer_switch)
-        self.timer_row = Adw.ActionRow(
-            title="Automatische Prüfungen", subtitle="Status wird geladen …",
-        )
+        self.timer_row = Adw.ActionRow(title="Automatische Prüfungen", subtitle="Status wird geladen …")
         self.timer_row.add_suffix(self.timer_switch)
         self.timer_row.set_activatable_widget(self.timer_switch)
-        timer_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-        timer_list.add_css_class("boxed-list")
-        timer_list.append(self.timer_row)
-        self.append(timer_list)
-
-        result_heading = Gtk.Label(label="Letztes Ergebnis", xalign=0)
-        result_heading.add_css_class("heading")
-        self.append(result_heading)
-        self.check_label = Gtk.Label(label="API-Prüfstatus wird geladen …", xalign=0, wrap=True)
-        self.append(self.check_label)
-        self.summary_label = Gtk.Label(xalign=0, wrap=True, visible=False)
-        self.summary_label.add_css_class("card")
-        self.append(self.summary_label)
-
-        self.diagnostic_panel = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL, spacing=8, visible=False,
+        overview.append(self.timer_row)
+        self.report_row = self._navigation_row(
+            "Letztes Ergebnis", "Noch keine Prüfung durchgeführt – „Jetzt prüfen“ startet die erste.",
+            on_open_report,
         )
-        self.diagnostic_title = Gtk.Label(label="Dienstdiagnose", xalign=0)
-        self.diagnostic_title.add_css_class("heading")
-        self.diagnostic_panel.append(self.diagnostic_title)
-        self.diagnostic_findings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.diagnostic_panel.append(self.diagnostic_findings)
-        diagnostic_actions = Gtk.Box(spacing=8)
-        self.diagnostic_action_buttons = {
-            "enable_timer": Gtk.Button(label="Automatische Prüfungen einschalten"),
-            "open_settings": Gtk.Button(label="Konfiguration prüfen"),
-            "run_check": Gtk.Button(label="Prüfung erneut starten"),
-            "retry_diagnostics": Gtk.Button(label="Diagnose wiederholen"),
-        }
-        callbacks = {
-            "enable_timer": on_enable_timer,
-            "open_settings": on_open_settings,
-            "run_check": on_force_run,
-            "retry_diagnostics": on_diagnostics,
-        }
-        for action, button in self.diagnostic_action_buttons.items():
-            button.connect("clicked", callbacks[action])
-            button.set_visible(False)
-            diagnostic_actions.append(button)
-        self.diagnostic_panel.append(diagnostic_actions)
-        self.append(self.diagnostic_panel)
-
-        self.status_label = Gtk.Label(label="Bereit", xalign=0, wrap=True)
-        self.status_label.add_css_class("dim-label")
-        self.append(self.status_label)
-        self.error_details = Gtk.Expander(label="Technische Details anzeigen", visible=False)
-        self.error_label = Gtk.Label(xalign=0, wrap=True, selectable=True)
-        self.error_label.add_css_class("error")
-        self.error_details.set_child(self.error_label)
-        self.append(self.error_details)
-        self.progress = Gtk.ProgressBar(show_text=True, text="Vorgang läuft …", visible=False)
-        self.append(self.progress)
-        self._pulse_source = 0
-        self.report_text = ""
-        self.diagnostic_text = ""
-        copy_box = Gtk.FlowBox(
-            selection_mode=Gtk.SelectionMode.NONE, column_spacing=10, row_spacing=10,
+        self.report_row.set_sensitive(False)
+        overview.append(self.report_row)
+        self.hardware_row = self._navigation_row(
+            "Passend zu diesem Rechner", "Grafikkarte wird ermittelt …", on_open_hardware,
         )
-        self.copy_report_button = Gtk.Button(label="Bericht kopieren")
-        self.copy_report_button.set_tooltip_text("Kopiert den vollständigen Bericht in die Zwischenablage.")
-        self.copy_report_button.connect("clicked", lambda *_: self._copy_text(self.report_text, "Bericht"))
-        self.copy_report_button.set_visible(False)
-        self.copy_diagnostic_button = Gtk.Button(label="Diagnose kopieren")
-        self.copy_diagnostic_button.set_tooltip_text("Kopiert die Dienstdiagnose in die Zwischenablage.")
-        self.copy_diagnostic_button.connect("clicked", lambda *_: self._copy_text(self.diagnostic_text, "Diagnose"))
-        self.copy_diagnostic_button.set_visible(False)
-        copy_box.append(self.copy_report_button)
-        copy_box.append(self.copy_diagnostic_button)
-        self.append(copy_box)
-        self.copy_report_button.set_sensitive(False)
-        self.copy_diagnostic_button.set_sensitive(False)
-        self.empty_state = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, valign=Gtk.Align.CENTER)
-        heading = Gtk.Label(label="Bereit für die erste Prüfung", xalign=0)
-        heading.add_css_class("title-2")
-        self.empty_state.append(heading)
-        self.empty_state.append(Gtk.Label(
-            label="Mit „Jetzt prüfen“ werden die freigegebenen Modellquellen abgefragt. "
-            "Es werden keine Modelle heruntergeladen oder ausgeführt.",
-            xalign=0, wrap=True,
-        ))
-        begin_button = Gtk.Button(label="Jetzt prüfen")
-        begin_button.add_css_class("suggested-action")
-        begin_button.connect("clicked", on_force_run)
-        self.empty_state.append(begin_button)
-        self.output_view = SettingsPage._text_view("Noch keine Ausgabe.", True, 400)
-        self.output_view.set_editable(False)
-        scroll = Gtk.ScrolledWindow(vexpand=True)
-        scroll.set_child(self.output_view)
-        self.output_stack = Gtk.Stack(vexpand=True)
-        self.output_stack.add_named(self.empty_state, "empty")
-        self.output_stack.add_named(scroll, "output")
-        self.output_stack.set_visible_child_name("empty")
-        self.append(self.output_stack)
-        self._update_timer_buttons()
+        overview.append(self.hardware_row)
+        box.append(overview)
+        self._update_timer_switch()
+
+    @staticmethod
+    def _navigation_row(title: str, subtitle: str, callback) -> Adw.ActionRow:
+        row = Adw.ActionRow(title=title, subtitle=subtitle, activatable=True, subtitle_lines=0)
+        row.add_suffix(Gtk.Image(icon_name="go-next-symbolic", accessible_role=Gtk.AccessibleRole.PRESENTATION))
+        row.connect("activated", callback)
+        return row
 
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
-        for button in (
-            self.run_button, self.recommendations_button,
-            *self.diagnostic_action_buttons.values(),
-        ):
-            button.set_sensitive(not busy)
-        self._update_timer_buttons()
+        self.run_button.set_sensitive(not busy)
+        self.diagnose_button.set_sensitive(not busy)
+        self._update_timer_switch()
         self.cancel_button.set_sensitive(busy)
         self.cancel_button.set_visible(busy)
         self.progress.set_visible(busy)
@@ -488,27 +574,15 @@ class ActionsPage(Gtk.Box):
     def clear_error(self) -> None:
         self.error_details.set_visible(False)
 
-    def set_output(self, text: str) -> None:
-        self.output_view.get_buffer().set_text(text or "Keine Ausgabe.")
-        self.output_stack.set_visible_child_name("output")
-
-    def set_report(self, report: str, summary: dict[str, str]) -> None:
-        self.report_text = report
-        self.copy_report_button.set_sensitive(bool(report))
-        self.copy_report_button.set_visible(bool(report))
-        self.summary_label.set_text(
-            "Letzte Prüfung: {checked_at}\nPassende Repositories: {repositories} · Änderungen: {changes}\n"
-            "Neu: {new} · Aktualisiert: {updated} · Entfernt: {removed} · Wieder erschienen: {returned}".format(**summary)
+    def set_report_summary(self, summary: dict[str, str]) -> None:
+        self.report_row.set_subtitle(
+            "Letzte Prüfung: {checked_at}\nNeu: {new} · Aktualisiert: {updated} · "
+            "Entfernt: {removed} · Wieder erschienen: {returned}".format(**summary)
         )
-        self.summary_label.set_visible(True)
-        self.set_output(report)
+        self.report_row.set_sensitive(True)
 
-    def _copy_text(self, text: str, label: str) -> None:
-        if not text:
-            self.notify(f"Kein {label.lower()} zum Kopieren vorhanden.")
-            return
-        self.get_clipboard().set(text)
-        self.notify(f"{label} in die Zwischenablage kopiert.")
+    def set_graphics(self, title: str) -> None:
+        self.hardware_row.set_subtitle(f"{title} · Welche Modelldateien passen?")
 
     def _on_timer_switch(self, switch: Gtk.Switch, state: bool) -> bool:
         if self._syncing_timer:
@@ -534,15 +608,194 @@ class ActionsPage(Gtk.Box):
         finally:
             self._syncing_timer = False
         self._timer_available = not bool(status.error)
-        self._update_timer_buttons()
+        self._update_timer_switch()
 
-    def _update_timer_buttons(self) -> None:
-        available = getattr(self, "_timer_available", False) and not getattr(self, "_busy", False)
-        for widget in (self.timer_switch, self.diagnostic_action_buttons["enable_timer"]):
-            widget.set_sensitive(available)
+    def _update_timer_switch(self) -> None:
+        self.timer_switch.set_sensitive(self._timer_available and not self._busy)
 
     def set_check_status(self, text: str) -> None:
         self.check_label.set_text(text)
+
+
+class ReportPage(_StatefulPage):
+    """Vollständiger Bericht mit Kurzbilanz; zeigt auf Wunsch auch eine Vorschau."""
+
+    def __init__(self, on_cancel, notify: Callable[[str], None]):
+        super().__init__(
+            "Noch kein Bericht", "Nach der ersten Prüfung steht der Bericht hier.",
+            "Vorschau wird erstellt …", on_cancel,
+        )
+        self.notify = notify
+        self.report_text = ""
+        self.shown_text = ""
+        self.copy_button = _icon_button(
+            "edit-copy-symbolic", "Bericht kopieren",
+            lambda *_: copy_to_clipboard(self, self.shown_text, "Bericht", self.notify),
+        )
+        self.copy_button.set_sensitive(False)
+        result = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
+                         margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        self.preview_label = Gtk.Label(
+            label="Vorschau ohne Änderungen: Dieses Ergebnis wurde nicht gespeichert.",
+            xalign=0, wrap=True, visible=False,
+        )
+        self.preview_label.add_css_class("warning")
+        result.append(self.preview_label)
+        self.summary_label = Gtk.Label(xalign=0, wrap=True)
+        self.summary_label.add_css_class("heading")
+        result.append(self.summary_label)
+        self.text_view, scroll = _readonly_text_view()
+        result.append(scroll)
+        self.add_result(result)
+
+    def _show(self, text: str, summary: dict[str, str], preview: bool) -> None:
+        self.shown_text = text
+        self.preview_label.set_visible(preview)
+        self.summary_label.set_text(
+            "Passende Repositories: {repositories} · Änderungen: {changes}\n"
+            "Neu: {new} · Aktualisiert: {updated} · Entfernt: {removed} · "
+            "Wieder erschienen: {returned}".format(**summary)
+        )
+        self.text_view.get_buffer().set_text(text)
+        self.copy_button.set_sensitive(bool(text))
+        self.show_result()
+
+    def set_report(self, report: str, summary: dict[str, str]) -> None:
+        self.report_text = report
+        self._show(report, summary, preview=False)
+
+    def set_preview(self, text: str, summary: dict[str, str]) -> None:
+        self._show(text, summary, preview=True)
+
+    def show_saved(self) -> None:
+        """Kehrt nach einer Vorschau zum gespeicherten Bericht zurück."""
+        if self.report_text:
+            self._show(self.report_text, logic.report_summary(self.report_text), preview=False)
+
+    def text(self) -> str:
+        buffer = self.text_view.get_buffer()
+        return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
+
+
+class HardwarePage(_StatefulPage):
+    """Hardware-Eignung: welche Modelldateien voraussichtlich in den Grafikspeicher passen."""
+
+    def __init__(self, on_cancel, on_refresh, notify: Callable[[str], None]):
+        super().__init__(
+            "Noch nicht berechnet", "„Neu berechnen“ vergleicht den Grafikspeicher mit den Modelldateien.",
+            "Öffentliche Modellangaben werden abgerufen und mit diesem Rechner verglichen …", on_cancel,
+        )
+        self.notify = notify
+        self.result_text = ""
+        self.copy_button = _icon_button(
+            "edit-copy-symbolic", "Ergebnis kopieren",
+            lambda *_: copy_to_clipboard(self, self.result_text, "Ergebnis", self.notify),
+        )
+        self.copy_button.set_sensitive(False)
+        self.refresh_button = _icon_button("view-refresh-symbolic", "Neu berechnen", on_refresh)
+        intro = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                        margin_top=12, margin_start=12, margin_end=12)
+        intro.append(Gtk.Label(
+            label="Vergleicht den sichtbaren Grafikspeicher mit den öffentlichen Größenangaben der "
+            "Modelldateien. Es wird nichts heruntergeladen; das Ergebnis ist ein vorsichtiger Richtwert.",
+            xalign=0, wrap=True,
+        ))
+        graphics_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        graphics_list.add_css_class("boxed-list")
+        self.graphics_row = Adw.ActionRow(
+            title="Grafikkarte wird ermittelt …", subtitle="Das dauert nur einen Moment.", subtitle_lines=0,
+        )
+        self.graphics_row.add_prefix(Gtk.Image(
+            icon_name="video-display-symbolic", accessible_role=Gtk.AccessibleRole.PRESENTATION,
+        ))
+        graphics_list.append(self.graphics_row)
+        intro.append(graphics_list)
+        self.prepend(intro)
+        self.text_view, scroll = _readonly_text_view()
+        scroll.set_margin_top(12)
+        scroll.set_margin_bottom(12)
+        scroll.set_margin_start(12)
+        scroll.set_margin_end(12)
+        self.add_result(scroll)
+
+    def set_graphics(self, title: str, detail: str) -> None:
+        self.graphics_row.set_title(title)
+        self.graphics_row.set_subtitle(detail)
+
+    def set_busy(self, busy: bool) -> None:
+        self.refresh_button.set_sensitive(not busy)
+
+    def set_result(self, text: str) -> None:
+        self.result_text = text
+        self.text_view.get_buffer().set_text(text or "Keine Ausgabe.")
+        self.copy_button.set_sensitive(bool(text))
+        self.show_result()
+
+
+class DiagnosticsPage(_StatefulPage):
+    """Dienstdiagnose: Befunde nach Schweregrad, passende Aktionen, Rohdaten einklappbar."""
+
+    def __init__(self, on_cancel, on_enable_timer, on_open_settings, on_run_check, on_retry,
+                 notify: Callable[[str], None]):
+        super().__init__(
+            "Noch keine Diagnose", "Die Diagnose prüft Dienst, Timer und sichtbare Grafikhardware.",
+            "Dienst und Timer werden überprüft …", on_cancel,
+        )
+        self.notify = notify
+        self.diagnostic_text = ""
+        self.copy_button = _icon_button(
+            "edit-copy-symbolic", "Diagnose kopieren",
+            lambda *_: copy_to_clipboard(self, self.diagnostic_text, "Diagnose", self.notify),
+        )
+        self.copy_button.set_sensitive(False)
+        self.refresh_button = _icon_button("view-refresh-symbolic", "Diagnose wiederholen", on_retry)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                          margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
+        self.diagnostic_title = Gtk.Label(label="Dienstdiagnose", xalign=0, wrap=True)
+        self.diagnostic_title.add_css_class("title-3")
+        content.append(self.diagnostic_title)
+        self.diagnostic_findings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content.append(self.diagnostic_findings)
+        actions = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, column_spacing=8, row_spacing=8)
+        self.diagnostic_action_buttons = {
+            "enable_timer": Gtk.Button(label="Automatische Prüfungen einschalten"),
+            "open_settings": Gtk.Button(label="Konfiguration prüfen"),
+            "run_check": Gtk.Button(label="Prüfung erneut starten"),
+            "retry_diagnostics": Gtk.Button(label="Diagnose wiederholen"),
+        }
+        callbacks = {
+            "enable_timer": on_enable_timer,
+            "open_settings": on_open_settings,
+            "run_check": on_run_check,
+            "retry_diagnostics": on_retry,
+        }
+        for action, button in self.diagnostic_action_buttons.items():
+            button.connect("clicked", callbacks[action])
+            button.set_visible(False)
+            actions.append(button)
+        content.append(actions)
+        self.details = Gtk.Expander(label="Technische Details anzeigen")
+        self.text_view, scroll = _readonly_text_view()
+        scroll.set_min_content_height(240)
+        self.details.set_child(scroll)
+        content.append(self.details)
+        result = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
+        result.set_child(Adw.Clamp(maximum_size=760, child=content))
+        self.add_result(result)
+        self._timer_available = False
+        self._busy = False
+
+    def set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self.refresh_button.set_sensitive(not busy)
+        for button in self.diagnostic_action_buttons.values():
+            button.set_sensitive(not busy)
+        self.set_timer_available(self._timer_available)
+
+    def set_timer_available(self, available: bool) -> None:
+        self._timer_available = available
+        self.diagnostic_action_buttons["enable_timer"].set_sensitive(available and not self._busy)
+
 
     def set_diagnostics(self, output: str) -> None:
         """Zeigt JSON-Diagnose nach Schweregrad und mit passenden Aktionen an."""
@@ -661,13 +914,14 @@ class ActionsPage(Gtk.Box):
         if not parts:
             parts.append("keine Fehler")
         self.diagnostic_title.set_text("Dienstdiagnose: " + ", ".join(parts))
-        self.diagnostic_panel.set_visible(True)
         journal = str(data.get("journal") or "Keine Journalzeilen verfügbar.")
         detail_lines.extend(["Letzte Journalzeilen", "-------------------", journal])
         self.diagnostic_text = "\n".join(detail_lines) + "\n"
-        self.copy_diagnostic_button.set_sensitive(True)
-        self.copy_diagnostic_button.set_visible(True)
-        self.set_output(self.diagnostic_text)
+        self.copy_button.set_sensitive(True)
+        self.text_view.get_buffer().set_text(self.diagnostic_text)
+        self.details.set_expanded(False)
+        self.show_result()
+
 
 
 class OnboardingView(Gtk.Box):

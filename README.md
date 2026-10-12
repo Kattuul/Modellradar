@@ -124,10 +124,20 @@ bereitgestellt werden. Die Benutzerinstallation verändert keine Systemdateien.
 Alternativ bringt das unter „GUI-Paket“ beschriebene Flatpak die grafische
 Laufzeit mit.
 
-Die GUI bearbeitet sämtliche Konfigurationsfelder, zeigt den gespeicherten
-Bericht an und priorisiert in der Hauptansicht die sofortige Prüfung, die
-Hardware-Eignung sowie den Schalter **Automatische Prüfungen**, der den Timer
-ein- und ausschaltet. Das Hauptmenü enthält Einstellungen, „Einführung erneut
+Die GUI bearbeitet sämtliche Konfigurationsfelder und ist hierarchisch
+aufgebaut: Die Übersicht enthält nur die sofortige Prüfung, den aktuellen
+Status, den Schalter **Automatische Prüfungen**, der den Timer ein- und
+ausschaltet, sowie die Zeilen „Letztes Ergebnis“ und „Passend zu diesem
+Rechner“. Diese führen in die Unteransichten **Bericht** und
+**Hardware-Eignung**; die **Dienstdiagnose** ist eine dritte Unteransicht.
+Jede Unteransicht zeigt eindeutig, ob sie lädt, ein Ergebnis hat oder ein
+Fehler aufgetreten ist, und bringt ihre eigene Kopier- beziehungsweise
+Neu-berechnen-Aktion mit. Ab libadwaita 1.4 nutzt die Navigation
+`Adw.NavigationView` (Zurück per Alt+←, Maustaste oder Wischgeste), ältere
+Versionen erhalten einen Zurück-Button. Die Hardware-Eignung wird beim ersten
+Öffnen berechnet und danach nur auf Wunsch erneut; eine **Vorschau ohne
+Änderungen** erscheint in der Berichtsansicht deutlich als ungespeichert
+markiert. Das Hauptmenü enthält Einstellungen, „Einführung erneut
 anzeigen“, das Untermenü
 „Weitere Prüfoptionen“ mit **Vorschau ohne Änderungen**, die Dienstdiagnose,
 eine Übersicht der Tastenkürzel und „Über Modellradar“. Der gespeicherte Bericht
@@ -139,8 +149,10 @@ Hintergrundprozess, während eine pulsierende Fortschrittsanzeige sichtbar ist;
 der Lauf kann direkt abgebrochen werden. Nach einer erfolgreichen regulären
 Prüfung wird der gespeicherte Bericht automatisch geladen und zeigt eine
 Kurzbilanz für neue, aktualisierte, entfernte und wieder erschienene Modelle.
-Bericht und Diagnose können ohne Terminal in die Zwischenablage kopiert werden;
-die jeweilige Kopieraktion erscheint erst, wenn passende Daten vorliegen.
+Bericht, Hardware-Eignung und Diagnose können ohne Terminal in die
+Zwischenablage kopiert werden; die jeweilige Kopieraktion ist erst aktiv, wenn
+passende Daten vorliegen. Schlägt ein Vorgang fehl, führt „Dienstdiagnose
+öffnen“ direkt aus der Fehlermeldung zur Diagnose.
 Der Menüpunkt „Dienstdiagnose“ zeigt eine strukturierte Diagnose mit Dienst- und
 Timerzustand, letztem Ergebnis, Prozessstatus, Unit-Pfaden, Zeitpunkten und den
 letzten 30 Journalzeilen. Befunde erscheinen nach Fehler, Warnung und Information
@@ -173,7 +185,9 @@ erfolgreichen API-Lauf und die aus `check_interval_days` berechnete tatsächlich
 API-Fälligkeit an.
 
 Die Zuständigkeiten sind bewusst getrennt: `SettingsPage` besitzt das
-Konfigurationsformular, `ActionsPage` die Prüf- und Berichtselemente,
+Konfigurationsformular, `DashboardPage` die Übersicht mit Prüfung, Status und
+Timer, `ReportPage`, `HardwarePage` und `DiagnosticsPage` die gleichnamigen
+Unteransichten, `NavigationHost` die Navigation zwischen ihnen,
 `CommandRunner` die asynchrone Prozessausführung und `TimerController` die
 fest begrenzten systemd-Benutzerbefehle. `RadarWindow` verbindet diese Teile
 und koordiniert nur Speichern, Prüfablauf und Statusanzeige.

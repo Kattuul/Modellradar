@@ -29,10 +29,14 @@ import model_radar  # noqa: E402
 import radar_gui_logic as logic  # noqa: E402
 import radar_platform  # noqa: E402
 from radar_gui_components import (  # noqa: E402
-    ActionsPage,
     CommandResult,
     CommandRunner,
+    DashboardPage,
+    DiagnosticsPage,
+    HardwarePage,
+    NavigationHost,
     OnboardingView,
+    ReportPage,
     SettingsPage,
     TimerController,
     TimerStatus,
@@ -61,13 +65,13 @@ class RadarWindow(Adw.ApplicationWindow):
         self._busy = False
         self._onboarding_dialog = None
         self._timer_status: TimerStatus | None = None
+        self._graphics_summary: tuple[str, str] | None = None
         self.preferences = logic.load_gui_preferences()
         self.set_default_size(
             self.preferences.get("width", 920), self.preferences.get("height", 720),
         )
         self.set_size_request(700, 560)
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header = Adw.HeaderBar()
         header.set_title_widget(Gtk.Label(label="LLM-Modellradar"))
         self.main_menu = Gio.Menu()
@@ -89,35 +93,56 @@ class RadarWindow(Adw.ApplicationWindow):
             tooltip_text="Hauptmenü",
         )
         header.pack_end(menu_button)
-        outer.append(header)
 
         self.settings_page = SettingsPage(self.config)
         self.settings_window = self._build_settings_window()
-        self.actions_page = ActionsPage(
+        self.dashboard = DashboardPage(
             lambda *_: self.run_radar("force"),
             self.cancel_run,
-            self.show_recommendations,
+            lambda *_: self.open_report(),
+            lambda *_: self.open_hardware(),
             lambda *_: self.set_timer(True),
             lambda *_: self.set_timer(False),
             self.show_diagnostics,
-            self.open_settings,
-            notify=self.show_toast,
         )
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.report_page = ReportPage(self.cancel_run, self.show_toast)
+        self.hardware_page = HardwarePage(self.cancel_run, self.show_recommendations, self.show_toast)
+        self.diagnostics_page = DiagnosticsPage(
+            self.cancel_run,
+            lambda *_: self.set_timer(True),
+            self.open_settings,
+            lambda *_: self._run_check_from_subpage(),
+            self.show_diagnostics,
+            self.show_toast,
+        )
         # Adw.Banner gibt es erst ab libadwaita 1.3; ältere Systeme zeigen nur den Status.
         self.banner = Adw.Banner(button_label="Diagnose") if hasattr(Adw, "Banner") else None
+        top_bars = ()
         if self.banner is not None:
             self.banner.connect("button-clicked", self.show_diagnostics)
-            body.append(self.banner)
-        body.append(self.actions_page)
-        self.toast_overlay = Adw.ToastOverlay(child=body, vexpand=True)
-        outer.append(self.toast_overlay)
-        self.set_content(outer)
+            top_bars = (self.banner,)
+
+        self.navigation = NavigationHost()
+        self.navigation.add("dashboard", "LLM-Modellradar", header, self.dashboard, top_bars)
+        for tag, title, page, buttons in (
+            ("report", "Bericht", self.report_page, (self.report_page.copy_button,)),
+            ("hardware", "Hardware-Eignung", self.hardware_page,
+             (self.hardware_page.copy_button, self.hardware_page.refresh_button)),
+            ("diagnostics", "Dienstdiagnose", self.diagnostics_page,
+             (self.diagnostics_page.copy_button, self.diagnostics_page.refresh_button)),
+        ):
+            page_header = Adw.HeaderBar()
+            for button in buttons:
+                page_header.pack_end(button)
+            self.navigation.add(tag, title, page_header, page)
+        self.toast_overlay = Adw.ToastOverlay(child=self.navigation.widget, vexpand=True)
+        self.set_content(self.toast_overlay)
         self._install_shortcuts()
         self.connect("close-request", self._save_preferences)
         self.refresh_timer_status()
         self.refresh_check_status()
         self.load_report(announce=False)
+        self._detect_graphics()
 
     def _install_shortcuts(self) -> None:
         for name, callback, shortcuts in (
@@ -195,66 +220,115 @@ class RadarWindow(Adw.ApplicationWindow):
         self.settings_save_button.set_sensitive(not busy)
         for name in ("save", "run-check", "dry-run", "diagnostics"):
             self.lookup_action(name).set_enabled(not busy)
-        self.actions_page.set_busy(busy)
+        for page in (self.dashboard, self.hardware_page, self.diagnostics_page):
+            page.set_busy(busy)
         if message:
-            self.actions_page.set_status(message)
+            self.dashboard.set_status(message)
 
-    def run_command(self, command: list[str], description: str, callback=None) -> None:
+    def run_command(self, command: list[str], description: str, callback=None) -> bool:
+        """Startet einen Hintergrundbefehl; liefert False, wenn bereits einer läuft."""
         if self._busy:
-            return
+            return False
         self.set_busy(True, description)
-        self.actions_page.clear_error()
+        self.dashboard.clear_error()
 
         def finish(result: CommandResult) -> None:
-            self.actions_page.set_output(result.output)
             self.set_busy(False, result.status_text())
             if result.returncode != 0 and not result.cancelled:
-                self.actions_page.set_error(result.status_text(), result.output)
+                self.dashboard.set_error(result.status_text(), result.output)
             if callback:
                 callback(result)
 
         self.command_runner.run(command, finish)
+        return True
 
     def run_radar(self, mode: str) -> None:
         arguments = ("--dry-run",) if mode == "dry" else ("--force",)
         label = "Vorschau läuft …" if mode == "dry" else "Prüfung läuft …"
-        first_check = not self.actions_page.report_text
+        first_check = not self.report_page.report_text
+        previous_state = self.report_page.state()
 
         def finished(result: CommandResult) -> None:
             self.refresh_check_status()
-            if mode == "force" and result.returncode == 0 and not result.cancelled:
+            if result.returncode != 0 or result.cancelled:
+                if mode == "dry":
+                    self._show_page_failure(self.report_page, result, previous_state)
+                return
+            if mode == "dry":
+                self.report_page.set_preview(result.output, logic.report_summary(result.output))
+            else:
                 self.load_report(announce=not first_check)
                 if first_check:
                     self._announce_first_report()
 
-        self.run_command(logic.radar_command(self.config_path, *arguments), label, finished)
+        if self.run_command(logic.radar_command(self.config_path, *arguments), label, finished) and mode == "dry":
+            # Die Vorschau erscheint dort, wo auch der Bericht steht – klar als ungespeichert markiert.
+            self.report_page.set_loading()
+            self.navigation.push("report")
+
+    @staticmethod
+    def _show_page_failure(page, result: CommandResult, previous_state: str) -> None:
+        """Abbruch stellt den vorigen Inhalt wieder her; Fehler werden auf der Seite erklärt."""
+        if result.cancelled:
+            page.restore(previous_state)
+        else:
+            page.set_error(result.status_text(), result.output)
+
+    def _run_check_from_subpage(self) -> None:
+        self.navigation.pop_to_root()
+        self.run_radar("force")
 
     def cancel_run(self, _button=None) -> None:
         self.command_runner.cancel()
-        self.actions_page.set_status("Abbruch angefordert …")
+        self.dashboard.set_status("Abbruch angefordert …")
 
-    def show_recommendations(self, _button=None) -> None:
-        self.run_command(
+    def open_report(self) -> None:
+        self.report_page.show_saved()
+        self.navigation.push("report")
+
+    def open_hardware(self) -> None:
+        self.navigation.push("hardware")
+        if self.hardware_page.state() == "empty":
+            self.show_recommendations()
+
+    def show_recommendations(self, *_args) -> None:
+        previous_state = self.hardware_page.state()
+
+        def finished(result: CommandResult) -> None:
+            if result.returncode == 0 and not result.cancelled:
+                self.hardware_page.set_result(result.output)
+            else:
+                self._show_page_failure(self.hardware_page, result, previous_state)
+
+        if self.run_command(
             logic.recommendations_command(self.config_path),
             "Hardware-Eignung wird anhand öffentlicher Metadaten berechnet …",
-        )
+            finished,
+        ):
+            self.hardware_page.set_loading()
 
     def show_diagnostics(self, *_args) -> None:
+        previous_state = self.diagnostics_page.state()
+
         def finished(result: CommandResult) -> None:
             if result.returncode != 0 or result.cancelled:
+                self._show_page_failure(self.diagnostics_page, result, previous_state)
                 return
             try:
-                self.actions_page.set_diagnostics(result.output)
-                self.actions_page.set_status("Dienstdiagnose ausgewertet.")
-                self.show_toast("Dienstdiagnose ausgewertet")
+                self.diagnostics_page.set_diagnostics(result.output)
+                self.dashboard.set_status("Dienstdiagnose ausgewertet.")
             except model_radar.RadarError as exc:
-                self.actions_page.set_status(f"Dienstdiagnose kann nicht ausgewertet werden: {exc}")
+                message = f"Dienstdiagnose kann nicht ausgewertet werden: {exc}"
+                self.dashboard.set_status(message)
+                self.diagnostics_page.set_error(message, result.output)
 
-        self.run_command(
+        self.navigation.push("diagnostics")
+        if self.run_command(
             self.timer_controller.diagnostic_command(),
             "Dienstdiagnose wird geladen …",
             finished,
-        )
+        ):
+            self.diagnostics_page.set_loading()
 
     def open_settings(self, *_args) -> None:
         self.settings_window.present()
@@ -266,17 +340,21 @@ class RadarWindow(Adw.ApplicationWindow):
             return
         try:
             report = path.read_text(encoding="utf-8")
-            self.actions_page.set_report(report, logic.report_summary(report))
-            self.actions_page.clear_error()
+            summary = logic.report_summary(report)
+            self.report_page.set_report(report, summary)
+            self.dashboard.set_report_summary(summary)
+            self.dashboard.clear_error()
             if announce:
-                self.show_toast("Bericht aktualisiert")
+                toast = Adw.Toast(title="Bericht aktualisiert", button_label="Ansehen")
+                toast.connect("button-clicked", lambda *_: self.open_report())
+                self.toast_overlay.add_toast(toast)
         except (model_radar.RadarError, OSError) as exc:
-            self.actions_page.set_error("Bericht kann nicht geladen werden.", str(exc))
+            self.dashboard.set_error("Bericht kann nicht geladen werden.", str(exc))
 
     def _announce_first_report(self) -> None:
         """Zeigt Einsteigern nach der ersten Prüfung, wo das Ergebnis steht."""
         toast = Adw.Toast(title="Erste Prüfung abgeschlossen", button_label="Bericht ansehen", timeout=8)
-        toast.connect("button-clicked", lambda *_: self.actions_page.output_view.grab_focus())
+        toast.connect("button-clicked", lambda *_: self.open_report())
         self.toast_overlay.add_toast(toast)
 
     def maybe_show_onboarding(self) -> None:
@@ -313,7 +391,8 @@ class RadarWindow(Adw.ApplicationWindow):
         self._onboarding_dialog = dialog
         self.onboarding_view = view
         self._sync_onboarding_timer()
-        self._detect_graphics(view)
+        if self._graphics_summary is not None:
+            view.set_hardware(*self._graphics_summary)
 
     def _sync_onboarding_timer(self) -> None:
         status = self._timer_status
@@ -323,16 +402,23 @@ class RadarWindow(Adw.ApplicationWindow):
                 available=not status.error,
             )
 
-    def _detect_graphics(self, view: OnboardingView) -> None:
-        """Liest die Grafikhardware im Hintergrund, weil nvidia-smi einige Sekunden brauchen kann."""
+    def _detect_graphics(self) -> None:
+        """Liest die Grafikhardware einmal im Hintergrund, weil nvidia-smi einige Sekunden brauchen kann."""
         def worker() -> None:
             try:
                 summary = logic.graphics_summary(radar_platform.detect_graphics())
-            except Exception as exc:  # Die Einführung darf an der Hardwareerkennung nie scheitern.
+            except Exception as exc:  # Die Oberfläche darf an der Hardwareerkennung nie scheitern.
                 summary = ("Grafikkarte nicht ermittelbar", f"Hinweis: {exc}")
-            GLib.idle_add(lambda: view.set_hardware(*summary) or GLib.SOURCE_REMOVE)
+            GLib.idle_add(lambda: self.apply_graphics_summary(summary) or GLib.SOURCE_REMOVE)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def apply_graphics_summary(self, summary: tuple[str, str]) -> None:
+        self._graphics_summary = summary
+        self.dashboard.set_graphics(summary[0])
+        self.hardware_page.set_graphics(*summary)
+        if self._onboarding_dialog is not None:
+            self.onboarding_view.set_hardware(*summary)
 
     def _onboarding_closed(self, view: OnboardingView) -> None:
         self._onboarding_dialog = None
@@ -356,7 +442,8 @@ class RadarWindow(Adw.ApplicationWindow):
 
     def apply_timer_status(self, status: TimerStatus) -> None:
         self._timer_status = status
-        self.actions_page.set_timer_status(status)
+        self.dashboard.set_timer_status(status)
+        self.diagnostics_page.set_timer_available(not status.error)
         if self.banner is not None:
             self.banner.set_title(f"Automatische Prüfungen nicht verfügbar: {status.error}" if status.error else "")
             self.banner.set_revealed(bool(status.error))
@@ -367,7 +454,7 @@ class RadarWindow(Adw.ApplicationWindow):
             text = logic.check_status_text(self.config, persist_migration=True)
         except (model_radar.RadarError, OSError) as exc:
             text = f"API-Prüfstatus nicht verfügbar: {exc}"
-        self.actions_page.set_check_status(text)
+        self.dashboard.set_check_status(text)
 
     def set_timer(self, enable: bool) -> None:
         if enable:

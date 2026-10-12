@@ -19,6 +19,13 @@
   Der Stand wird als `onboarding_version` gespeichert; nach der ersten Prüfung
   führt ein Hinweis zum Bericht. GTK-Tests schreiben ihre GUI-Präferenzen nicht
   mehr in das echte Benutzerverzeichnis.
+- Eigene Unteransichten für Bericht, Hardware-Eignung und Dienstdiagnose
+  (`Adw.NavigationView` ab libadwaita 1.4, sonst Stack mit Zurück-Button). Die
+  Übersicht zeigt nur noch Prüfung, Status, Timer und Navigationszeilen samt
+  erkannter Grafikkarte. Jede Unteransicht hat eigene Lade-, Ergebnis- und
+  Fehlerzustände sowie Kopier- und Neu-berechnen-Aktionen; ein Abbruch stellt
+  das vorige Ergebnis wieder her. Die Vorschau erscheint als ungespeicherter
+  Bericht, Fehlermeldungen bieten direkt „Dienstdiagnose öffnen“.
 
 - Hardwarebewusste, unprivilegierte GPU-Erkennung in der Systemdiagnose:
   sichtbare DRM-Grafikadapter, Treiber und optionaler dedizierter VRAM; klare
