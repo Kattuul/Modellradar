@@ -1,0 +1,30 @@
+__pycache__/
+*.py[cod]
+
+# Local analysis, workspace metadata and generated results
+graphify-out/
+.agents/
+.aws/
+.codex/
+outputs/
+work/
+dist/
+build/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Credentials and local configuration overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+config.local.json
+
+# Runtime state and migration backups (not test fixtures)
+/state.json
+/latest-report.txt
+*.bak
+*.lock

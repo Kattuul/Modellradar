@@ -1,0 +1,38 @@
+[
+  {
+    "id": "Qwen/Qwen4-4B-Instruct",
+    "sha": "1111111111111111111111111111111111111111",
+    "lastModified": "2026-09-01T10:00:00.000Z",
+    "pipeline_tag": "text-generation",
+    "tags": ["text-generation", "safetensors"],
+    "safetensors": {"total": 4000000000},
+    "siblings": [{"rfilename": "model.safetensors"}]
+  },
+  {
+    "id": "ggml-org/gemma-4-9b-it-GGUF",
+    "sha": "2222222222222222222222222222222222222222",
+    "lastModified": "2026-09-02T10:00:00.000Z",
+    "pipeline_tag": "text-generation",
+    "tags": ["gguf", "text-generation"],
+    "siblings": [
+      {"rfilename": "gemma-4-9b-it-Q4_K_M.gguf"},
+      {"rfilename": "gemma-4-9b-it-Q8_0.gguf"}
+    ]
+  },
+  {
+    "id": "google/gemma-4-27b-it",
+    "sha": "3333333333333333333333333333333333333333",
+    "lastModified": "2026-09-03T10:00:00.000Z",
+    "pipeline_tag": "text-generation",
+    "safetensors": {"total": 27000000000},
+    "tags": []
+  },
+  {
+    "id": "someone/Qwen4-4B-Instruct",
+    "sha": "4444444444444444444444444444444444444444",
+    "lastModified": "2026-09-04T10:00:00.000Z",
+    "pipeline_tag": "text-generation",
+    "safetensors": {"total": 4000000000},
+    "tags": []
+  }
+]

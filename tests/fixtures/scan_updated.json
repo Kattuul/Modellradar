@@ -1,0 +1,28 @@
+[
+  {
+    "id": "Qwen/Qwen4-4B-Instruct",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "lastModified": "2026-09-08T10:00:00.000Z",
+    "pipeline_tag": "text-generation",
+    "tags": ["text-generation", "safetensors"],
+    "safetensors": {"total": 4000000000},
+    "siblings": [{"rfilename": "model.safetensors"}]
+  },
+  {
+    "id": "ggml-org/gemma-4-9b-it-GGUF",
+    "sha": "2222222222222222222222222222222222222222",
+    "lastModified": "2026-09-02T10:00:00.000Z",
+    "pipeline_tag": "text-generation",
+    "tags": ["gguf", "text-generation"],
+    "siblings": [{"rfilename": "gemma-4-9b-it-Q4_K_M.gguf"}]
+  },
+  {
+    "id": "openai/gpt-oss-12b-instruct",
+    "sha": "5555555555555555555555555555555555555555",
+    "lastModified": "2026-09-09T10:00:00.000Z",
+    "pipeline_tag": "text-generation",
+    "tags": ["text-generation"],
+    "config": {"num_parameters": 12000000000},
+    "siblings": [{"rfilename": "model.safetensors"}]
+  }
+]

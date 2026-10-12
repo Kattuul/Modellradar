@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LLM-Modellradar
+Comment=Einstellungen und Prüfberichte für mögliche lokale Modellnachfolger
+Exec=qwen35-model-radar-gui
+Icon=system-search-symbolic
+Terminal=false
+Categories=Utility;GTK;
+StartupNotify=true

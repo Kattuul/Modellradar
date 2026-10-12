@@ -1,0 +1,45 @@
+name: Linux platform checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:stable-slim", "fedora:latest"]
+        mode: [headless, gui]
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install base tools
+        shell: bash
+        run: |
+          if command -v apt-get >/dev/null; then
+            apt-get update
+            apt-get install -y python3 git
+          else
+            dnf install -y python3 git
+          fi
+      - uses: actions/checkout@v4
+      - name: Install GUI test dependencies
+        if: matrix.mode == 'gui'
+        shell: bash
+        run: |
+          if command -v apt-get >/dev/null; then
+            apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 xvfb xauth dbus-x11
+          else
+            dnf install -y python3-gobject gtk4 libadwaita xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11
+          fi
+      - name: Check headless installation and core
+        if: matrix.mode == 'headless'
+        run: python3 release_check.py --headless
+      - name: Check GUI and desktop installation
+        if: matrix.mode == 'gui'
+        run: python3 release_check.py

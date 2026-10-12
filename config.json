@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "api_url": "https://huggingface.co/api/models",
+  "publishers": {
+    "Qwen": [
+      "Qwen"
+    ],
+    "google": [
+      "Gemma"
+    ],
+    "openai": [
+      "gpt-oss"
+    ],
+    "ggml-org": [
+      "Qwen",
+      "Gemma",
+      "gpt-oss"
+    ]
+  },
+  "families": {
+    "Qwen": [
+      "qwen"
+    ],
+    "Gemma": [
+      "gemma"
+    ],
+    "gpt-oss": [
+      "gpt-oss",
+      "gpt_oss"
+    ]
+  },
+  "parameter_min_b": 2.0,
+  "parameter_max_b": 24.0,
+  "preferred_pipeline_tags": [
+    "text-generation",
+    "conversational"
+  ],
+  "filter_mode": "conservative",
+  "excluded_name_terms": [
+    "embedding",
+    "embed",
+    "reranker",
+    "classifier",
+    "reward-model",
+    "vision",
+    "audio",
+    "image",
+    "vl-",
+    "-vl",
+    "tts",
+    "asr"
+  ],
+  "check_interval_days": 7,
+  "absent_retention_days": 365,
+  "request_timeout_seconds": 20,
+  "request_retries": 3,
+  "retry_backoff_seconds": 2.0,
+  "page_size": 100,
+  "max_pages_per_query": 10,
+  "notify_on_first_run": false,
+  "state_file": "~/.local/share/qwen35-model-radar/state.json",
+  "report_file": "~/.local/share/qwen35-model-radar/latest-report.txt"
+}

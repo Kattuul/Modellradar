@@ -1,0 +1,20 @@
+[Unit]
+Description=LLM-Modellradar für mögliche lokale Modellnachfolger
+Documentation=https://huggingface.co/docs/huggingface_hub/package_reference/hf_api
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/qwen35-model-radar --config %h/.config/qwen35/model-radar.json
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/qwen35-model-radar
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=default.target
