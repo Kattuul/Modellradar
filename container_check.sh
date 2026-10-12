@@ -41,7 +41,7 @@ if command -v apt-get >/dev/null; then
     apt-get install -y -qq $packages >/dev/null
 else
     packages="python3 git"
-    [ "$MODE" = gui ] && packages="$packages python3-gobject gobject-introspection gtk4 libadwaita xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11"
+    [ "$MODE" = gui ] && packages="$packages python3-gobject gobject-introspection gtk4 libadwaita libglvnd-gles xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11"
     dnf install -y -q $packages >/dev/null
 fi
 cp -r /src /work

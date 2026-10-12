@@ -70,6 +70,8 @@
 
 - Fedora-GUI-Abhängigkeiten um `gobject-introspection` ergänzt, damit auch in minimalen Images die Cairo-Typinformationen verfügbar sind.
 - CI prüft GTK-/libadwaita-Imports vor dem Testlauf; Installationshinweise entsprechend korrigiert.
+- CI und `container_check.sh` installieren unter Fedora zusätzlich `libglvnd-gles`; ohne
+  `libGLESv2.so.2` bricht GTK 4.22 in minimalen Images beim GUI-Test ab.
 
 ## 2.6.0 – 2026-10-12
 
