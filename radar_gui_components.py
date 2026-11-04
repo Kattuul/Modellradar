@@ -594,6 +594,8 @@ class _StatefulPage(Gtk.Box):
 class DashboardPage(Gtk.ScrolledWindow):
     """Übersicht: eine Hauptaktion, Status und Wege zu den Unteransichten."""
 
+    NO_REPORT_TEXT = "Noch keine Prüfung durchgeführt – „Jetzt prüfen“ startet die erste."
+
     def __init__(
         self, on_force_run, on_cancel, on_open_report, on_open_hardware,
         on_enable_timer, on_disable_timer, on_diagnostics,
@@ -667,10 +669,7 @@ class DashboardPage(Gtk.ScrolledWindow):
         self.timer_row.add_suffix(self.timer_switch)
         self.timer_row.set_activatable_widget(self.timer_switch)
         overview.append(self.timer_row)
-        self.report_row = self._navigation_row(
-            "_Letztes Ergebnis", "Noch keine Prüfung durchgeführt – „Jetzt prüfen“ startet die erste.",
-            on_open_report,
-        )
+        self.report_row = self._navigation_row("_Letztes Ergebnis", self.NO_REPORT_TEXT, on_open_report)
         self.report_row.set_sensitive(False)
         overview.append(self.report_row)
         self.hardware_row = self._navigation_row(
@@ -733,6 +732,11 @@ class DashboardPage(Gtk.ScrolledWindow):
             )
         ))
         self.report_row.set_sensitive(True)
+
+    def clear_report_summary(self) -> None:
+        """Ohne gespeicherten Bericht verweist die Zeile wieder auf die erste Prüfung."""
+        self.report_row.set_subtitle(self.NO_REPORT_TEXT)
+        self.report_row.set_sensitive(False)
 
     def set_graphics(self, title: str) -> None:
         self.hardware_row.set_subtitle(_plain(f"{title} · Welche Modelldateien passen?"))
@@ -885,6 +889,14 @@ class ReportPage(_StatefulPage):
             return  # Unverändert: Aufgeklappte Zeilen und Scrollposition bleiben erhalten.
         self.report_text = report
         self._show(report, summary, preview=False)
+
+    def clear_report(self) -> None:
+        """Vergisst den gespeicherten Bericht, z. B. nach dem Wechsel auf eine noch leere Berichtsdatei."""
+        self.report_text = ""
+        self.shown_text = ""
+        self.copy_button.set_sensitive(False)
+        self.spinner.stop()
+        self._switch("empty")
 
     def _showing_saved(self) -> bool:
         return self.state() == "result" and self.shown_text == self.report_text and not self.preview_label.get_visible()

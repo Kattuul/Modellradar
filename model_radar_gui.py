@@ -404,6 +404,9 @@ class RadarWindow(Adw.ApplicationWindow):
         """
         path = Path(self.config["report_file"]).expanduser()
         if not announce and not path.is_file():
+            # Keine Datei (mehr), etwa nach dem Wechsel der Berichtsdatei: Alte Inhalte nicht weiter zeigen.
+            self.report_page.clear_report()
+            self.dashboard.clear_report_summary()
             return False
         try:
             report = path.read_text(encoding="utf-8")
