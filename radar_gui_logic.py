@@ -130,8 +130,14 @@ def save_gui_preferences(values: dict[str, int], path: Path | None = None) -> No
     model_radar.atomic_write(target, json.dumps(safe, indent=2) + "\n")
 
 
-def _gib(value: int) -> str:
-    return f"{value / (1024 ** 3):.1f}".replace(".", ",") + " GiB"
+def decimal_comma(text: str) -> str:
+    """Schreibt Dezimalzahlen wie „5.40“ in deutscher Form „5,40“; anderer Text bleibt."""
+    return re.sub(r"(\d)\.(\d)", r"\1,\2", text)
+
+
+def format_gib(value: int, digits: int = 1) -> str:
+    """Einheitliche Größenangabe in GiB mit Dezimalkomma für alle Ansichten."""
+    return decimal_comma(f"{value / (1024 ** 3):.{digits}f}") + " GiB"
 
 
 def graphics_summary(graphics: dict[str, Any]) -> tuple[str, str]:
@@ -148,7 +154,7 @@ def graphics_summary(graphics: dict[str, Any]) -> tuple[str, str]:
         lines = []
         for adapter in adapters:
             vram = adapter.get("vram_bytes")
-            memory = f"{_gib(vram)} Grafikspeicher" if isinstance(vram, int) and vram > 0 else "Grafikspeicher unbekannt"
+            memory = f"{format_gib(vram)} Grafikspeicher" if isinstance(vram, int) and vram > 0 else "Grafikspeicher unbekannt"
             kind = {"dediziert": "eigene Grafikkarte", "integriert": "im Prozessor eingebaut"}.get(
                 adapter.get("kind"), "Bauart unbekannt",
             )
@@ -158,7 +164,7 @@ def graphics_summary(graphics: dict[str, Any]) -> tuple[str, str]:
             if item.get("kind") == "dediziert" and isinstance(item.get("vram_bytes"), int) and item["vram_bytes"] > 0
         ]
         title = (
-            f"Grafikkarte mit {_gib(max(dedicated))} Grafikspeicher erkannt" if dedicated
+            f"Grafikkarte mit {format_gib(max(dedicated))} Grafikspeicher erkannt" if dedicated
             else "Grafik erkannt, Grafikspeicher unbekannt"
         )
     return title, "\n".join(lines + [f"Hinweis: {item}" for item in limitations])
@@ -185,13 +191,10 @@ def report_summary(report: str) -> dict[str, str]:
             match = re.match(pattern, line)
             if match:
                 values[key] = match.group(1)
-        status = re.match(r"^\[(NEU|AKTUALISIERT|ENTFERNT|WIEDER ERSCHIENEN)\]", line)
-        if status:
-            key = {
-                "NEU": "new", "AKTUALISIERT": "updated", "ENTFERNT": "removed",
-                "WIEDER ERSCHIENEN": "returned",
-            }[status.group(1)]
-            values[key] = str(int(values[key]) + 1)
+    # Dieselbe Zerlegung wie die Ereigniskarten, damit Kennzahlen und Liste übereinstimmen.
+    for event in report_events(report):
+        key = _STATUS_KEYS[event["status"]]
+        values[key] = str(int(values[key]) + 1)
     return values
 
 
@@ -199,6 +202,7 @@ REPORT_STATUS_LABELS = {
     "NEU": "Neu", "AKTUALISIERT": "Aktualisiert", "ENTFERNT": "Entfernt",
     "WIEDER ERSCHIENEN": "Wieder erschienen",
 }
+_STATUS_KEYS = {"NEU": "new", "AKTUALISIERT": "updated", "ENTFERNT": "removed", "WIEDER ERSCHIENEN": "returned"}
 HARDWARE_RATING_LABELS = {
     "GUT PASSEND": "Gut passend", "EINGESCHRÄNKT": "Eingeschränkt",
     "UNBEKANNT": "Unbekannt", "NICHT EMPFOHLEN": "Nicht empfohlen",
@@ -234,7 +238,7 @@ def hardware_result(text: str) -> dict[str, Any]:
     """Zerlegt die Hardware-Eignung in VRAM-Angabe, Hinweise und Bewertungen."""
     vram = re.search(r"^Sichtbarer dedizierter VRAM:\s*(.+)$", text, re.MULTILINE)
     return {
-        "vram": vram.group(1).replace(".", ",") if vram else "",
+        "vram": decimal_comma(vram.group(1)) if vram else "",
         "notes": re.findall(r"^Hinweis:\s*(.+)$", text, re.MULTILINE),
         "items": _entries(text, HARDWARE_RATING_LABELS),
     }
@@ -245,7 +249,11 @@ def model_card_uri(value: str | None) -> str | None:
     if not value:
         return None
     parsed = urllib.parse.urlparse(value.strip())
-    if parsed.scheme != "https" or parsed.hostname != "huggingface.co" or parsed.port is not None:
+    try:
+        port = parsed.port
+    except ValueError:  # Ungültiger oder zu großer Port in einem veränderten Bericht.
+        return None
+    if parsed.scheme != "https" or parsed.hostname != "huggingface.co" or port is not None:
         return None
     if parsed.username or parsed.password:
         return None

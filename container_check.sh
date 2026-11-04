@@ -5,11 +5,16 @@
 # GTK 4.8/libadwaita 1.2 die Fallbacks für ältere Systeme abdeckt.
 #
 #   ./container_check.sh                       # debian:12-slim, mit GUI
+#   ./container_check.sh --headless            # debian:12-slim, ohne GUI
 #   ./container_check.sh fedora:latest         # anderes Image
 #   ./container_check.sh debian:12-slim --headless
 set -euo pipefail
 
 SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Ein führender Modus ohne Image prüft das Standard-Image, z. B. „./container_check.sh --headless“.
+case "${1:-}" in
+    gui | --gui | headless | --headless) set -- debian:12-slim "$@" ;;
+esac
 IMAGE=${1:-debian:12-slim}
 MODE=${2:-gui}
 case "$MODE" in

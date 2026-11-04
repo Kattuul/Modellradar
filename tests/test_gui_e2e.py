@@ -281,6 +281,26 @@ class GtkWorkflowTests(unittest.TestCase):
         toast.assert_called_once_with("Einstellungen gespeichert")
         self.assertEqual(json.loads(self.config_path.read_text())["check_interval_days"], 3)
 
+    def test_neue_leere_berichtsdatei_zeigt_keinen_alten_bericht(self):
+        self.assertEqual(self.window.report_page.state(), "result")
+        new_path = Path(self.directory.name) / "neu" / "report.txt"
+        self.window.settings_page.report_entry.set_text(str(new_path))
+        with mock.patch.object(self.window, "show_toast"), \
+                mock.patch("radar_gui_logic.validate_data_path", side_effect=lambda value, _label: value):
+            self.assertTrue(self.window.on_save())
+        self.assertEqual(self.window.report_page.state(), "empty")
+        self.assertEqual(self.window.report_page.report_text, "")
+        self.assertFalse(self.window.report_page.copy_button.get_sensitive())
+        self.assertFalse(self.window.dashboard.report_row.get_sensitive())
+        self.assertFalse(self.window.dashboard.error_details.get_visible())
+
+        # Sobald die neue Datei existiert, erscheint ihr Inhalt.
+        new_path.parent.mkdir(parents=True)
+        new_path.write_text("NEUER BERICHT\n", encoding="utf-8")
+        self.window.open_report()
+        self.assertEqual(self.output_text(self.window), "NEUER BERICHT\n")
+        self.assertTrue(self.window.dashboard.report_row.get_sensitive())
+
     def test_ungueltige_einstellungen_bleiben_offen(self):
         self.window.settings_page.min_spin.set_value(50)
         self.window.settings_page.max_spin.set_value(1)

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -595,6 +594,8 @@ class _StatefulPage(Gtk.Box):
 class DashboardPage(Gtk.ScrolledWindow):
     """Übersicht: eine Hauptaktion, Status und Wege zu den Unteransichten."""
 
+    NO_REPORT_TEXT = "Noch keine Prüfung durchgeführt – „Jetzt prüfen“ startet die erste."
+
     def __init__(
         self, on_force_run, on_cancel, on_open_report, on_open_hardware,
         on_enable_timer, on_disable_timer, on_diagnostics,
@@ -668,10 +669,7 @@ class DashboardPage(Gtk.ScrolledWindow):
         self.timer_row.add_suffix(self.timer_switch)
         self.timer_row.set_activatable_widget(self.timer_switch)
         overview.append(self.timer_row)
-        self.report_row = self._navigation_row(
-            "_Letztes Ergebnis", "Noch keine Prüfung durchgeführt – „Jetzt prüfen“ startet die erste.",
-            on_open_report,
-        )
+        self.report_row = self._navigation_row("_Letztes Ergebnis", self.NO_REPORT_TEXT, on_open_report)
         self.report_row.set_sensitive(False)
         overview.append(self.report_row)
         self.hardware_row = self._navigation_row(
@@ -734,6 +732,11 @@ class DashboardPage(Gtk.ScrolledWindow):
             )
         ))
         self.report_row.set_sensitive(True)
+
+    def clear_report_summary(self) -> None:
+        """Ohne gespeicherten Bericht verweist die Zeile wieder auf die erste Prüfung."""
+        self.report_row.set_subtitle(self.NO_REPORT_TEXT)
+        self.report_row.set_sensitive(False)
 
     def set_graphics(self, title: str) -> None:
         self.hardware_row.set_subtitle(_plain(f"{title} · Welche Modelldateien passen?"))
@@ -882,15 +885,28 @@ class ReportPage(_StatefulPage):
         self.show_result()
 
     def set_report(self, report: str, summary: dict[str, str]) -> None:
+        if report == self.report_text and self._showing_saved():
+            return  # Unverändert: Aufgeklappte Zeilen und Scrollposition bleiben erhalten.
         self.report_text = report
         self._show(report, summary, preview=False)
+
+    def clear_report(self) -> None:
+        """Vergisst den gespeicherten Bericht, z. B. nach dem Wechsel auf eine noch leere Berichtsdatei."""
+        self.report_text = ""
+        self.shown_text = ""
+        self.copy_button.set_sensitive(False)
+        self.spinner.stop()
+        self._switch("empty")
+
+    def _showing_saved(self) -> bool:
+        return self.state() == "result" and self.shown_text == self.report_text and not self.preview_label.get_visible()
 
     def set_preview(self, text: str, summary: dict[str, str]) -> None:
         self._show(text, summary, preview=True)
 
     def show_saved(self) -> None:
         """Kehrt nach einer Vorschau zum gespeicherten Bericht zurück."""
-        if self.report_text:
+        if self.report_text and not self._showing_saved():
             self._show(self.report_text, logic.report_summary(self.report_text), preview=False)
 
     def text(self) -> str:
@@ -953,7 +969,7 @@ class HardwarePage(_StatefulPage):
     def _variant_text(variant: str) -> str:
         """„datei.gguf, Q4_K_M, Datei: 5.40 GiB“ → Dateiname plus Größen mit Dezimalkomma."""
         name, *rest = [part.strip() for part in variant.split(", ")]
-        rest = [re.sub(r"(\d)\.(\d)", r"\1,\2", part).replace(": ", " ") for part in rest]
+        rest = [logic.decimal_comma(part).replace(": ", " ") for part in rest]
         return "\n".join([name] + ([" · ".join(rest)] if rest else []))
 
     def _item_row(self, item: dict) -> Adw.ActionRow:
@@ -1151,7 +1167,7 @@ class DiagnosticsPage(_StatefulPage):
                     if not isinstance(adapter, dict):
                         continue
                     vram = adapter.get("vram_bytes")
-                    vram_text = f"{int(vram) / (1024 ** 3):.1f} GiB VRAM" if isinstance(vram, int) else "VRAM unbekannt"
+                    vram_text = f"{logic.format_gib(vram)} VRAM" if isinstance(vram, int) else "VRAM unbekannt"
                     detail_lines.append(
                         f"- {adapter.get('card', 'GPU')}: {adapter.get('vendor', 'unbekannt')} "
                         f"({adapter.get('kind', 'unbekannt')}, Treiber: {adapter.get('driver', 'unbekannt')}, {vram_text})"
