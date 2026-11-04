@@ -208,20 +208,25 @@ class RadarWindow(Adw.ApplicationWindow):
         return window
 
     def _screen_size(self) -> tuple[int, int] | None:
-        """Logische Größe des Bildschirms mit diesem Fenster, vor dem Anzeigen die des größten."""
+        """Logische Größe des Bildschirms mit diesem Fenster, vor dem Anzeigen die des kleinsten.
+
+        Vor dem Anzeigen ist unbekannt, auf welchem Monitor das Fenster erscheint; der kleinste
+        stellt sicher, dass es auch neben einem großen externen Bildschirm vollständig passt.
+        """
         display = self.get_display()
         surface = self.get_surface()
         monitor = display.get_monitor_at_surface(surface) if surface is not None else None
         monitors = [monitor] if monitor is not None else list(display.get_monitors())
         sizes = [(m.get_geometry().width, m.get_geometry().height) for m in monitors]
-        return max(sizes, key=lambda size: size[0] * size[1]) if sizes else None
+        return min(sizes, key=lambda size: size[0] * size[1]) if sizes else None
 
     def _fit_dialog(self, window: Gtk.Window, width: int, height: int) -> None:
         """Hält Fenster ohne eigene Größenanpassung innerhalb kleiner Bildschirme wie 1024×600."""
         window.set_default_size(*logic.fit_window_size(width, height, self._screen_size(), (360, 300)))
 
-    def show_toast(self, text: str) -> None:
-        self.toast_overlay.add_toast(Adw.Toast(title=GLib.markup_escape_text(text)))
+    def show_toast(self, text: str, overlay: Adw.ToastOverlay | None = None, timeout: int = 5) -> None:
+        """Zeigt Fremdtext maskiert an; Toast-Titel werten Pango-Markup aus."""
+        (overlay or self.toast_overlay).add_toast(Adw.Toast(title=GLib.markup_escape_text(text), timeout=timeout))
 
     def _save_preferences(self, *_args) -> bool:
         width, height = self.get_width(), self.get_height()
@@ -238,15 +243,18 @@ class RadarWindow(Adw.ApplicationWindow):
         try:
             config = self.settings_page.collect_config()
             logic.save_config(self.config_path, config)
+            report_changed = config.get("report_file") != self.config.get("report_file")
             self.config = config
             self.settings_page.accept_config(config)
             self.refresh_check_status()
+            if report_changed:
+                self.load_report(announce=False)
             self.settings_window.set_visible(False)
             self.show_toast("Einstellungen gespeichert")
             return True
         except (model_radar.RadarError, OSError) as exc:
             self.settings_window.present()
-            self.settings_toast_overlay.add_toast(Adw.Toast(title=GLib.markup_escape_text(f"Nicht gespeichert: {exc}"), timeout=0))
+            self.show_toast(f"Nicht gespeichert: {exc}", self.settings_toast_overlay, timeout=0)
             return False
 
     def set_busy(self, busy: bool, message: str = "") -> None:
@@ -270,10 +278,13 @@ class RadarWindow(Adw.ApplicationWindow):
             self.set_busy(False, result.status_text())
             if result.returncode != 0 and not result.cancelled:
                 self.dashboard.set_error(result.status_text(), result.output)
-            if callback:
-                callback(result)
-            if self._deferred_tasks:
-                self._deferred_tasks.pop(0)()
+            try:
+                if callback:
+                    callback(result)
+            finally:
+                # Auch wenn die Auswertung scheitert, startet die wartende Aufgabe.
+                if self._deferred_tasks:
+                    self._deferred_tasks.pop(0)()
 
         self.command_runner.run(command, finish)
         return True
@@ -293,8 +304,7 @@ class RadarWindow(Adw.ApplicationWindow):
             if mode == "dry":
                 self.report_page.set_preview(result.output, logic.report_summary(result.output))
             else:
-                self.load_report(announce=not first_check)
-                if first_check:
+                if self.load_report(announce=not first_check) and first_check:
                     self._announce_first_report()
 
         if self.run_command(logic.radar_command(self.config_path, *arguments), label, finished) and mode == "dry":
@@ -319,6 +329,8 @@ class RadarWindow(Adw.ApplicationWindow):
         self.dashboard.set_status("Abbruch angefordert …")
 
     def open_report(self) -> None:
+        # Der Timer schreibt den Bericht im Hintergrund neu; daher stets frisch von der Platte lesen.
+        self.load_report(announce=False)
         self.report_page.show_saved()
         self.navigation.push("report")
 
@@ -385,11 +397,14 @@ class RadarWindow(Adw.ApplicationWindow):
             self._fit_dialog(self.settings_window, *self.settings_window.get_default_size())
         self.settings_window.present()
 
-    def load_report(self, announce: bool = True) -> None:
-        """Lädt den Bericht; beim Start fehlt er vor der ersten Prüfung regulär."""
+    def load_report(self, announce: bool = True) -> bool:
+        """Lädt den Bericht; beim Start fehlt er vor der ersten Prüfung regulär.
+
+        Liefert True, wenn ein Bericht gelesen und angezeigt wurde.
+        """
         path = Path(self.config["report_file"]).expanduser()
         if not announce and not path.is_file():
-            return
+            return False
         try:
             report = path.read_text(encoding="utf-8")
             summary = logic.report_summary(report)
@@ -400,8 +415,10 @@ class RadarWindow(Adw.ApplicationWindow):
                 toast = Adw.Toast(title="Bericht aktualisiert", button_label="Ansehen")
                 toast.connect("button-clicked", lambda *_: self.open_report())
                 self.toast_overlay.add_toast(toast)
+            return True
         except (model_radar.RadarError, OSError) as exc:
             self.dashboard.set_error("Bericht kann nicht geladen werden.", str(exc))
+            return False
 
     def _announce_first_report(self) -> None:
         """Zeigt Einsteigern nach der ersten Prüfung, wo das Ergebnis steht."""
@@ -451,12 +468,12 @@ class RadarWindow(Adw.ApplicationWindow):
         else:
             dialog = Adw.Window(title="Einführung", transient_for=self, modal=True, content=content)
             self._fit_dialog(dialog, 560, 620)
-            escape = Gtk.ShortcutController()
-            escape.add_shortcut(Gtk.Shortcut.new(
+            close_shortcut = Gtk.ShortcutController()
+            close_shortcut.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string("Escape"),
                 Gtk.CallbackAction.new(lambda *_: dialog.close() or True),
             ))
-            dialog.add_controller(escape)
+            dialog.add_controller(close_shortcut)
             dialog.connect("close-request", lambda *_: self._onboarding_closed(view) or False)
             self._add_compact_breakpoint(dialog, view)
             dialog.present()
@@ -508,8 +525,18 @@ class RadarWindow(Adw.ApplicationWindow):
             logic.save_gui_preferences(self.preferences)
         except OSError:
             pass
-        if start_check:
-            self.run_radar("force")
+        if not start_check:
+            return
+        if self._busy:
+            # Die gewünschte Prüfung startet, sobald die laufende Aufgabe fertig ist.
+            if self._run_forced_check not in self._deferred_tasks:
+                self._deferred_tasks.append(self._run_forced_check)
+            self.show_toast("Die Prüfung startet, sobald die laufende Aufgabe beendet ist.")
+            return
+        self._run_forced_check()
+
+    def _run_forced_check(self) -> None:
+        self.run_radar("force")
 
     def refresh_timer_status(self) -> None:
         self.timer_controller.refresh(self.apply_timer_status)
@@ -611,7 +638,7 @@ class RadarWindow(Adw.ApplicationWindow):
     def show_about(self, *_args) -> None:
         details = dict(
             application_name="LLM-Modellradar",
-            application_icon=os.environ.get("FLATPAK_ID", "io.github.Kattuul.Modellradar"),
+            application_icon=os.environ.get("FLATPAK_ID") or "system-search-symbolic",
             version=model_radar.VERSION,
             developer_name="Kattuul",
             website="https://github.com/Kattuul/Modellradar",

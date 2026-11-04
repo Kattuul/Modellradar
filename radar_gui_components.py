@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -882,15 +881,20 @@ class ReportPage(_StatefulPage):
         self.show_result()
 
     def set_report(self, report: str, summary: dict[str, str]) -> None:
+        if report == self.report_text and self._showing_saved():
+            return  # Unverändert: Aufgeklappte Zeilen und Scrollposition bleiben erhalten.
         self.report_text = report
         self._show(report, summary, preview=False)
+
+    def _showing_saved(self) -> bool:
+        return self.state() == "result" and self.shown_text == self.report_text and not self.preview_label.get_visible()
 
     def set_preview(self, text: str, summary: dict[str, str]) -> None:
         self._show(text, summary, preview=True)
 
     def show_saved(self) -> None:
         """Kehrt nach einer Vorschau zum gespeicherten Bericht zurück."""
-        if self.report_text:
+        if self.report_text and not self._showing_saved():
             self._show(self.report_text, logic.report_summary(self.report_text), preview=False)
 
     def text(self) -> str:
@@ -953,7 +957,7 @@ class HardwarePage(_StatefulPage):
     def _variant_text(variant: str) -> str:
         """„datei.gguf, Q4_K_M, Datei: 5.40 GiB“ → Dateiname plus Größen mit Dezimalkomma."""
         name, *rest = [part.strip() for part in variant.split(", ")]
-        rest = [re.sub(r"(\d)\.(\d)", r"\1,\2", part).replace(": ", " ") for part in rest]
+        rest = [logic.decimal_comma(part).replace(": ", " ") for part in rest]
         return "\n".join([name] + ([" · ".join(rest)] if rest else []))
 
     def _item_row(self, item: dict) -> Adw.ActionRow:
@@ -1151,7 +1155,7 @@ class DiagnosticsPage(_StatefulPage):
                     if not isinstance(adapter, dict):
                         continue
                     vram = adapter.get("vram_bytes")
-                    vram_text = f"{int(vram) / (1024 ** 3):.1f} GiB VRAM" if isinstance(vram, int) else "VRAM unbekannt"
+                    vram_text = f"{logic.format_gib(vram)} VRAM" if isinstance(vram, int) else "VRAM unbekannt"
                     detail_lines.append(
                         f"- {adapter.get('card', 'GPU')}: {adapter.get('vendor', 'unbekannt')} "
                         f"({adapter.get('kind', 'unbekannt')}, Treiber: {adapter.get('driver', 'unbekannt')}, {vram_text})"
